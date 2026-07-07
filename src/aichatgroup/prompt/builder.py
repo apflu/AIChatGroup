@@ -1,0 +1,84 @@
+"""分层 Prompt 组装 + 显式 cache_control 断点（M0 共享全知布局）。
+
+布局（规格 line 65：不做隔离时共享块前置，让所有 Agent 命中同一缓存条目）：
+
+  system:
+    [第0层 世界观圣经 + 群聊规则]        ← cache breakpoint 1
+    [第1层 长期摘要 + 客观关系图谱]      ← cache breakpoint 2
+  messages:
+    [第2层 共享历史，逐条 user 消息，append-only]
+        └─ 最后一条历史消息           ← 滚动 cache breakpoint 3
+    [第3层尾部 该角色人设 + 私有记忆 + director 指令 + 输出契约]  ← 不缓存
+
+历史全部用 user 角色（带 `[发言者]` 前缀），使得 system+history 前缀对所有 Agent
+逐字节相同 → 共享同一缓存车道；模型据此生成 assistant 回合即当前角色的气泡。
+
+ROADMAP —— 向 SillyTavern 预设结构靠拢：
+    当前是硬编码的四层组装，本质是 SillyTavern「命名 prompt 片段 + 顺序/开关 +
+    marker 占位 + 深度注入」模型的一个特例（见 preset/example.json 的
+    prompts / prompt_order）。后续应把各层抽象成可命名、可排序、可开关的片段，
+    支持导入 SillyTavern 预设来控制模型行为——但预设不替代本 Builder，只提供结构与文案。
+    改造时留意：cache_control 断点要挂在稳定前缀片段的边界上。
+"""
+from __future__ import annotations
+
+from ..domain.markers import BUBBLE_SEPARATOR, MEMORY_MARKER
+from ..domain.types import Agent, RoomState, WorldBook
+
+# 返回给 Gateway 的结构：system 为 block 列表，messages 为 {role, content} 列表。
+SystemBlock = dict
+Message = dict
+
+_OUTPUT_CONTRACT = (
+    "请以该角色的身份、用中文发言。你可以连发 1~3 条简短的聊天气泡（模拟真人连发），"
+    f"相邻两条之间用 `{BUBBLE_SEPARATOR}` 分隔；如想控制停顿，可写 `<<SEPARATOR:2>>` 指定秒数，"
+    "省略则由系统按长度自动推断。只写你自己这个角色的话，绝不替其他角色或用户发言。\n"
+    f"如需更新你的私有记忆，可在全部气泡之后写 `{MEMORY_MARKER}` 再跟一段 JSON"
+    "（例如 {\"notes\": \"...\"}）；不需要则省略。"
+)
+
+
+def _cache(text: str) -> SystemBlock:
+    return {"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}
+
+
+def build_tail(agent: Agent, memory_text: str, director_instruction: str) -> str:
+    """第 3 层尾部：人设 + 私有记忆快照 + director 指令 + 输出契约。"""
+    parts = [
+        "==== 以下为本回合动态指令（每次调用可变，不缓存）====",
+        agent.render_persona(),
+    ]
+    if memory_text.strip():
+        parts.append(f"# 你的私有记忆\n{memory_text.strip()}")
+    if director_instruction.strip():
+        parts.append(f"# 导演指令\n{director_instruction.strip()}")
+    parts.append(_OUTPUT_CONTRACT)
+    return "\n\n".join(parts)
+
+
+def build_prompt(
+    world: WorldBook,
+    room: RoomState,
+    agent: Agent,
+    director_instruction: str = "",
+) -> tuple[list[SystemBlock], list[Message]]:
+    """组装一次调用的 (system_blocks, messages)。"""
+    system: list[SystemBlock] = [
+        _cache(world.render()),          # breakpoint 1
+        _cache(room.render_layer1()),    # breakpoint 2
+    ]
+
+    messages: list[Message] = []
+    last = len(room.history) - 1
+    for i, msg in enumerate(room.history):
+        if i == last:
+            # 滚动 breakpoint 3：cache_control 挂在最后一条历史消息上
+            messages.append(
+                {"role": "user", "content": [_cache(msg.render())]}
+            )
+        else:
+            messages.append({"role": "user", "content": msg.render()})
+
+    tail = build_tail(agent, room.memory.get(agent.id, ""), director_instruction)
+    messages.append({"role": "user", "content": tail})  # 尾部，不缓存
+    return system, messages

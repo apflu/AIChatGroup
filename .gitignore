@@ -1,0 +1,12 @@
+spec_raw/
+preset/
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.env
+.pytest_cache/
+*.sqlite
+*.db

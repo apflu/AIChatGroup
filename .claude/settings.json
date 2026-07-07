@@ -1,0 +1,14 @@
+{
+  "env": {
+    "PYTHONUTF8": "1"
+  },
+
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(head:*)",
+      "Bash(uv:*)",
+      "Bash(uv run *)"
+    ]
+  }
+}
