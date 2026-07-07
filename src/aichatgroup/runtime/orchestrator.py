@@ -25,6 +25,7 @@ from ..engine.parsing import parse_turn_output
 from ..engine.pacing import resolve_pauses
 from ..engine.turn import merge_memory
 from ..gateway import ModelGateway
+from ..observability import log_event
 from ..prompt import build_prompt
 from ..persistence.store import Store
 from ..transport.base import InboundMessage, Transport
@@ -135,6 +136,7 @@ class Orchestrator:
             reply_to=reply_to, meta=meta,
         )
         logger.info("摄入 [%s] %s", msg.speaker, msg.text)
+        log_event("ingest", speaker=msg.speaker, msg_id=mid, reply_to=reply_to)
 
     # ---- 回复寻址辅助 --------------------------------------------------
     def _internal_id_for_external(self, external_id: str | None) -> int | None:
@@ -194,12 +196,14 @@ class Orchestrator:
                 await self._sleep(self.idle_poll_s)
                 continue
             agent = self._agent_by_id[speaker_id]
+            log_event("schedule", agent=agent.name, model=agent.model_id)
             try:
                 await self._speak(agent)
-            except Exception:
+            except Exception as exc:
                 # 单个 provider 抽风（鉴权失败/超时/限流）不应拖垮整屋子；
                 # 记下来、跳过这个角色本回合，其他角色照常热闹。
                 logger.exception("角色 %s 发言失败，跳过本回合", agent.name)
+                log_event("error", agent=agent.name, error=str(exc))
             turns += 1
             await self._maybe_compact()
             await self._sleep(self.turn_interval_s)
@@ -223,6 +227,12 @@ class Orchestrator:
             "回合 %s bubbles=%d cache_read=%d cache_creation=%d",
             agent.name, len(parsed),
             resp.usage.cache_read_input_tokens, resp.usage.cache_creation_input_tokens,
+        )
+        log_event(
+            "model_call", agent=agent.name, model=agent.model_id, bubbles=len(parsed),
+            input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
+            cache_read=resp.usage.cache_read_input_tokens,
+            cache_creation=resp.usage.cache_creation_input_tokens,
         )
         # 4) 逐条发送：typing → 等 pause → 发气泡（动作+语言渲染）→ 入历史（模拟真人连发）
         for pb, pause in zip(parsed, pauses):
@@ -259,6 +269,10 @@ class Orchestrator:
             self.gateway, self.world, self.room, self.compaction_model_id,
             max_history=self.max_history, keep_last=self.keep_last, max_tokens=self.max_tokens,
         )
-        if result.compacted and self.store is not None and self.room_id is not None:
-            self.store.save_summary(self.room_id, self.room.long_term_summary, self.room.objective_relations)
-            self.store.trim_history(self.room_id, self.keep_last)
+        if result.compacted:
+            log_event("compaction", dropped=result.dropped)
+            if self.store is not None and self.room_id is not None:
+                self.store.save_summary(
+                    self.room_id, self.room.long_term_summary, self.room.objective_relations
+                )
+                self.store.trim_history(self.room_id, self.keep_last)

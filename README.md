@@ -44,7 +44,7 @@ uv run --with anthropic --with python-telegram-bot \
 
 | 子包 / 模块 | 职责 |
 | --- | --- |
-| `domain/` | 领域层：`types.py`（`WorldBook`/`Agent`/`RoomState`/`TurnResult`/`PacingConfig` ...）+ `markers.py`（控制标记词表） |
+| `domain/` | 领域层：`types.py`（`Message`/`ContentPart`/`WorldBook`/`Agent`/`RoomState` ...）+ `markers.py`（控制标记词表） |
 | `gateway/` | Model Gateway：`base.py`（协议+辅助）、`anthropic_gateway.py`、`openai_gateway.py`（含兼容端点）、`gemini_gateway.py`、`router.py`（按 model_id 分发）、`factory.py`（按 key 装配）、`mock.py`（模拟前缀缓存） |
 | `prompt/` | `builder.py`：分层 Prompt 组装 + 显式 `cache_control` 断点 |
 | `engine/` | 运行层：`parsing.py`（多气泡+记忆增量）、`pacing.py`（气泡节奏）、`turn.py`（发言回合）、`compaction.py`（历史压缩） |
@@ -53,6 +53,7 @@ uv run --with anthropic --with python-telegram-bot \
 | `persistence/` | `store.py`：SQLite 会话状态（历史去重 / 记忆快照 / 摘要） |
 | `runtime/` | 编排层：`orchestrator.py`（异步 tick 主循环）、`switch.py`（开关键） |
 | `presets.py` | 房间预设加载（手写世界书 + 角色卡，见 `examples/room.example.json`） |
+| `observability.py` | 结构化事件流：`log_event(kind, **fields)`（ingest/schedule/model_call/compaction/error） |
 | `config.py` / `logging_setup.py` | 跨层基础设施：配置与日志 |
 
 常用符号在顶层再导出：`from aichatgroup import Agent, Orchestrator, ModelDirector, Store, load_preset`。
@@ -117,13 +118,28 @@ messages:
 共享块前置、人设沉尾，使 `system + 历史` 前缀对所有 Agent 逐字节相同 → 命中同一缓存条目。
 硬规则：永远不让一个模型生成不归它管的角色内容。
 
+## 消息模型（围绕消息的可靠抽象）
+
+共享历史里每条是一个 `Message`（粒度 = **一条气泡**）：`id`（房间内稳定单调，既是持久主键、
+也是模型回复寻址的 handle）、`speaker`、`parts`（动作/语言分离）、`reply_to`（指向另一条 id）、
+`meta`（`external_id`/… 开放逃生舱）。渲染进历史为 `⟦id⟧ [speaker] （回…）（动作）语言`——
+`⟦id⟧`/`speaker`/`parts` 都跨 agent 相同、跨轮稳定，故前缀逐字节一致，**共享缓存不变式不破**。
+
 ## 输出契约
 
-被点名的角色一次调用输出 1~3 条气泡，相邻两条之间用 `{{SEPARATOR}}` 分隔；可选在末尾追加
-`{{MEMORY}}` + 一段 JSON 作为记忆增量，引擎在外部合并进该角色的私有快照。控制标记词表集中在
-[markers.py](src/aichatgroup/domain/markers.py)，解析对大小写/空白容忍，并剥掉模型误补的闭合标记
-（`{{/MEMORY}}` 甚至旧式 `</MEMORY>`）；后续将由预设配置驱动。用 `{{…}}` 而非 `<<…>>` 是因为
-尖括号会诱发模型「XML 要闭合」的本能弄脏 JSON，双花括号既避开这点、又与 SillyTavern 宏一致。
+被点名的角色一次调用输出 1~3 条气泡：
+
+- 相邻两条之间用 `{{SEPARATOR}}` 分隔（可带秒数 `{{SEPARATOR:2}}`）；
+- **动作/神态**用 `*…*` 或 `{{ACTION}}…{{/ACTION}}` 包裹，其余为台词——引擎归一成 `parts`；
+- **回复某条**：气泡首写 `{{REPLY:37}}` 表示回复历史里 `⟦37⟧`。人类用 Telegram「回复」时，
+  被回复消息的引用也会传入；目标若已滑出近窗，引擎从 store 取回**内联重注入**一次；
+- 末尾可追加 `{{MEMORY}}` + 一段 JSON 作为记忆增量，引擎合并进该角色私有快照。
+
+控制标记词表集中在 [markers.py](src/aichatgroup/domain/markers.py)，解析对大小写/空白容忍，
+剥掉模型误补的闭合标记（`{{/MEMORY}}` / 旧式 `</MEMORY>`）与误回显的 `⟦id⟧`/自名前缀，并有
+fuzz 测试守护。用 `{{…}}` 而非 `<<…>>`：尖括号诱发「XML 要闭合」本能弄脏 JSON，双花括号既避开
+这点、又与 SillyTavern 宏一致。**agentic/tool 不进消息流**——留给 storyteller/sim 等暗线模块在
+各自私有上下文里自理。
 
 > **Prompt 结构方向**：PromptBuilder 会逐步向 SillyTavern 预设结构靠拢（命名 prompt 片段 +
 > 顺序/开关 + marker 占位 + 深度注入，见 `preset/example.json`），并支持导入 SillyTavern 预设
@@ -145,7 +161,8 @@ messages:
 
 - ~~**M0** 引擎骨架~~ ✅
 - ~~**M1（MVP）** Telegram 多 bot 热闹群聊：Transport 抽象、异步 Orchestrator、Director 调度器、
-  手写世界书/角色卡、开关键、SQLite 持久化、基础 compaction~~ ✅
-  （待办：BotFather 实机冒烟——建 bot、关 privacy、进群跑一轮）
-- **M2** Storyteller（编导/压力源）+ 更强记忆。
+  手写世界书/角色卡、开关键、SQLite 持久化、基础 compaction~~ ✅（已实机验证）
+- ~~**消息抽象地基**（M1↔M2）：`Message` 域模型（稳定 id/parts/reply_to/meta）、动作/语言分离、
+  回复寻址端到端、结构化事件日志~~ ✅
+- **M2** Storyteller（编导/压力源，暗线模块保留私有上下文自行思考）+ 更强记忆。
 - **M3** 知识隔离。 **M4** 世界书生成 + RAG。 **M5** FoundryVTT 支持。

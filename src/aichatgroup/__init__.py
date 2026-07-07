@@ -35,6 +35,7 @@ from .engine import (
     resolve_pauses,
     run_turn,
 )
+from .observability import log_event
 from .gateway import (
     AnthropicGateway,
     GeminiGateway,
@@ -96,6 +97,7 @@ __all__ = [
     "Settings",
     "ProviderSpec",
     "load_provider_specs",
+    "log_event",
     # meta
     "__version__",
 ]
