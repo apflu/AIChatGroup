@@ -43,15 +43,17 @@ def run_turn(
     """
     system, messages = build_prompt(world, room, agent, director_instruction)
     resp = gateway.complete(system, messages, agent.model_id, max_tokens=max_tokens)
-    bubbles, pause_hints, memory_delta = parse_turn_output(resp.text, speaker=agent.name)
-    pauses = resolve_pauses(bubbles, pause_hints, agent.pacing)
+    parsed, memory_delta = parse_turn_output(resp.text, speaker=agent.name)
+    pauses = resolve_pauses(
+        [pb.display for pb in parsed], [pb.pause_hint for pb in parsed], agent.pacing
+    )
 
     logger.info(
         "回合 agent=%s model=%s bubbles=%d pauses=%s | input=%d output=%d "
         "cache_read=%d cache_creation=%d",
         agent.name,
         agent.model_id,
-        len(bubbles),
+        len(parsed),
         [round(p, 2) for p in pauses],
         resp.usage.input_tokens,
         resp.usage.output_tokens,
@@ -60,14 +62,14 @@ def run_turn(
     )
 
     if apply:
-        for bubble in bubbles:
-            room.append(agent.name, bubble)
+        for pb in parsed:
+            room.append(agent.name, parts=pb.parts, reply_to=pb.reply_to)
         if memory_delta:
             room.memory[agent.id] = merge_memory(room.memory.get(agent.id, ""), memory_delta)
 
     return TurnResult(
         agent_id=agent.id,
-        bubbles=bubbles,
+        bubbles=[pb.display for pb in parsed],
         memory_delta=memory_delta,
         usage=resp.usage,
         raw_text=resp.text,

@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS messages (
     external_id TEXT,
     speaker     TEXT NOT NULL,
     text        TEXT NOT NULL,
+    reply_to_id INTEGER,
     ts          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 -- 仅对「有 external_id」的消息去重；引擎自产的气泡 external_id 为 NULL，不受此约束。
@@ -51,7 +52,14 @@ class Store:
         self.conn = sqlite3.connect(str(path))
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(_SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """轻量迁移：对已存在的旧库补上后加的列（CREATE IF NOT EXISTS 不会补列）。"""
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(messages)")}
+        if "reply_to_id" not in cols:
+            self.conn.execute("ALTER TABLE messages ADD COLUMN reply_to_id INTEGER")
 
     def close(self) -> None:
         self.conn.close()
@@ -68,11 +76,17 @@ class Store:
 
     # ---- messages ------------------------------------------------------
     def append_message(
-        self, room_id: int, speaker: str, text: str, external_id: str | None = None
+        self,
+        room_id: int,
+        speaker: str,
+        text: str,
+        external_id: str | None = None,
+        reply_to_id: int | None = None,
     ) -> int | None:
         """追加一条共享历史，返回新行的 id（房间内稳定 handle）。
 
         有 external_id 且重复时返回 None（不插入）——调用方据此判断是否为去重命中。
+        reply_to_id 指向被回复消息的内部 id。
         """
         if external_id is not None:
             exists = self.conn.execute(
@@ -82,25 +96,48 @@ class Store:
             if exists is not None:
                 return None
         cur = self.conn.execute(
-            "INSERT INTO messages(room_id, external_id, speaker, text) VALUES (?, ?, ?, ?)",
-            (room_id, external_id, speaker, text),
+            "INSERT INTO messages(room_id, external_id, speaker, text, reply_to_id) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (room_id, external_id, speaker, text, reply_to_id),
         )
         self.conn.commit()
         return int(cur.lastrowid)
 
+    def _row_to_message(self, r) -> Message:
+        meta = {}
+        if r["external_id"]:
+            meta["external_id"] = r["external_id"]
+        return Message(
+            id=int(r["id"]),
+            speaker=r["speaker"],
+            parts=[ContentPart(kind="speech", text=r["text"])],
+            reply_to=r["reply_to_id"],
+            meta=meta,
+        )
+
     def load_history(self, room_id: int, limit: int | None = None) -> list[Message]:
-        sql = "SELECT id, speaker, text, external_id FROM messages WHERE room_id = ? ORDER BY id"
+        sql = ("SELECT id, speaker, text, external_id, reply_to_id "
+               "FROM messages WHERE room_id = ? ORDER BY id")
         rows = self.conn.execute(sql, (room_id,)).fetchall()
-        msgs = [
-            Message(
-                id=int(r["id"]),
-                speaker=r["speaker"],
-                parts=[ContentPart(kind="speech", text=r["text"])],
-                meta={"external_id": r["external_id"]} if r["external_id"] else {},
-            )
-            for r in rows
-        ]
+        msgs = [self._row_to_message(r) for r in rows]
         return msgs[-limit:] if limit is not None else msgs
+
+    def get_message(self, room_id: int, message_id: int) -> Message | None:
+        """按内部 id 取一条消息（超窗回复重注入用；可能已被 compaction 删除→None）。"""
+        r = self.conn.execute(
+            "SELECT id, speaker, text, external_id, reply_to_id "
+            "FROM messages WHERE room_id = ? AND id = ?",
+            (room_id, message_id),
+        ).fetchone()
+        return self._row_to_message(r) if r is not None else None
+
+    def id_for_external(self, room_id: int, external_id: str) -> int | None:
+        """把 external_id（如 telegram chat:msg）解析成内部 id。"""
+        r = self.conn.execute(
+            "SELECT id FROM messages WHERE room_id = ? AND external_id = ?",
+            (room_id, external_id),
+        ).fetchone()
+        return int(r["id"]) if r is not None else None
 
     def count_messages(self, room_id: int) -> int:
         row = self.conn.execute(

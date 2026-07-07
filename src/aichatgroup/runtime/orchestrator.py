@@ -177,24 +177,26 @@ class Orchestrator:
             self.gateway.complete, system, messages, agent.model_id, self.max_tokens
         )
         # 3) 解析 + 节奏（循环线程内）
-        bubbles, hints, memory_delta = parse_turn_output(resp.text, speaker=agent.name)
-        pauses = resolve_pauses(bubbles, hints, agent.pacing)
+        parsed, memory_delta = parse_turn_output(resp.text, speaker=agent.name)
+        pauses = resolve_pauses(
+            [pb.display for pb in parsed], [pb.pause_hint for pb in parsed], agent.pacing
+        )
         logger.info(
             "回合 %s bubbles=%d cache_read=%d cache_creation=%d",
-            agent.name, len(bubbles),
+            agent.name, len(parsed),
             resp.usage.cache_read_input_tokens, resp.usage.cache_creation_input_tokens,
         )
-        # 4) 逐条发送：typing → 等 pause → 发气泡 → 入历史（模拟真人连发）
-        for bubble, pause in zip(bubbles, pauses):
+        # 4) 逐条发送：typing → 等 pause → 发气泡（动作+语言渲染）→ 入历史（模拟真人连发）
+        for pb, pause in zip(parsed, pauses):
             await self.transport.send_typing(agent)
             if pause > 0:
                 await self._sleep(pause)
-            await self.transport.send_text(agent, bubble)
+            await self.transport.send_text(agent, pb.display)
             # store id 为权威 handle；无 store 时 RoomState 自铸本地 id
             mid = None
             if self.store is not None and self.room_id is not None:
-                mid = self.store.append_message(self.room_id, agent.name, bubble)
-            self.room.append(agent.name, bubble, id=mid)
+                mid = self.store.append_message(self.room_id, agent.name, pb.display)
+            self.room.append(agent.name, id=mid, parts=pb.parts, reply_to=pb.reply_to)
         # 5) 合并记忆增量（尾部私有快照，不缓存）
         if memory_delta:
             merged = merge_memory(self.room.memory.get(agent.id, ""), memory_delta)

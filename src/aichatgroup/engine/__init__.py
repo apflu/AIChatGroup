@@ -1,11 +1,12 @@
 """引擎运行层：输出解析、气泡节奏、发言回合执行、历史压缩。"""
 from .compaction import CompactionResult, maybe_compact
 from .pacing import infer_pause, resolve_pauses
-from .parsing import parse_turn_output
+from .parsing import ParsedBubble, parse_turn_output
 from .turn import merge_memory, run_turn
 
 __all__ = [
     "parse_turn_output",
+    "ParsedBubble",
     "infer_pause",
     "resolve_pauses",
     "run_turn",

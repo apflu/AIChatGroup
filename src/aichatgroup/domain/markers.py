@@ -26,3 +26,8 @@ MEMORY_MARKER = "{{MEMORY}}"
 
 # 分隔符可携带显式停顿秒数：`{{SEPARATOR:2}}` / `{{SEPARATOR:1.5}}`。
 # 省略数字则由 pacing 按下一条气泡长度推断（见 engine/pacing.py）。
+
+# 动作/语言分离：动作可用 `{{ACTION}}…{{/ACTION}}` 包裹，也容忍 RP 惯用的 `*…*`；
+# 其余为语言。解析统一归到 ContentPart(kind=action|speech)（见 engine/parsing.py）。
+ACTION_OPEN = "{{ACTION}}"
+ACTION_CLOSE = "{{/ACTION}}"

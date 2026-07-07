@@ -1,30 +1,51 @@
-"""单角色单调用输出解析：多气泡切分（含显式停顿）+ 尾附记忆增量 JSON。
+"""单角色单调用输出解析：多气泡切分（含显式停顿）+ 动作/语言分离 + 尾附记忆增量 JSON。
 
 输出契约（在尾部指令中告知模型）：
 - 1~3 条聊天气泡，相邻两条之间用 `{{SEPARATOR}}` 分隔；
   可写 `{{SEPARATOR:2}}` 显式指定停顿秒数，省略则由系统按长度推断；
+- 动作可用 `{{ACTION}}…{{/ACTION}}` 或 `*…*` 包裹，其余为语言（引擎归一成 parts）；
 - 可选：全部气泡之后用 `{{MEMORY}}` 再跟一段 JSON，作为记忆增量。
 
 标记词表集中在 domain.markers；匹配对大小写与内部空白容忍
 （`{{separator}}`、`{{ MEMORY }}`、`{{SEPARATOR : 2}}` 等变体均可识别）。
 
-parse_turn_output 返回 (bubbles, pause_hints, memory_delta)：
-- bubbles:      list[str]
-- pause_hints:  list[float|None]，与 bubbles 等长；pause_hints[i] 是「第 i 条气泡
-                之前」模型显式给出的停顿秒数；pause_hints[0] 恒为 None（首条无前置停顿）。
-                实际等待时间由 pacing.resolve_pauses 结合角色 PacingConfig 计算。
+parse_turn_output 返回 (bubbles, memory_delta)：
+- bubbles:      list[ParsedBubble]，每条含 parts（动作/语言）、pause_hint、reply_to；
+                pause_hint 是「该气泡之前」模型显式给的停顿秒数（首条恒 None），
+                实际等待由 pacing.resolve_pauses 结合角色 PacingConfig 计算。
 """
 from __future__ import annotations
 
 import json
 import logging
 import re
+from dataclasses import dataclass, field
 
 from ..domain.markers import BUBBLE_SEPARATOR, MEMORY_MARKER
+from ..domain.types import ContentPart, render_parts
 
 logger = logging.getLogger(__name__)
 
 MAX_BUBBLES = 3
+
+
+@dataclass
+class ParsedBubble:
+    """一条解析后的气泡草稿（尚未分配 id；id 由 RoomState/store 铸造）。"""
+
+    parts: list[ContentPart] = field(default_factory=list)
+    pause_hint: float | None = None
+    reply_to: int | None = None      # Phase C：{{REPLY:id}} 填充
+
+    @property
+    def text(self) -> str:
+        """仅语言段拼接（供 pacing 之外的用途 / 断言）。"""
+        return "".join(p.text for p in self.parts if p.kind == "speech")
+
+    @property
+    def display(self) -> str:
+        """往外发 / 入历史的文本：动作 + 语言按序渲染。"""
+        return render_parts(self.parts)
 
 def _marker_inner(marker: str) -> str:
     """取标记里的词（去掉 {{ }} 与空白），如 '{{SEPARATOR}}' → 'SEPARATOR'。"""
@@ -116,6 +137,37 @@ def _strip_self_tag(bubble: str, name: str) -> str:
     return bubble
 
 
+# 动作跨度：`{{ACTION}}…{{/ACTION}}`（容忍大小写/空白）或 RP 惯用的单星号 `*…*`。
+# 其余为语言。两者都容忍，内部统一归到 ContentPart。
+_ACTION_RE = re.compile(
+    r"\{\{\s*ACTION\s*\}\}(.*?)\{\{\s*/\s*ACTION\s*\}\}"   # {{ACTION}}…{{/ACTION}}
+    r"|\*([^*\n]+?)\*",                                     # *…*（单星号、不跨行）
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _extract_parts(text: str) -> list[ContentPart]:
+    """把一条气泡文本切成有序的 动作/语言 段。无动作标记则整段为一个 speech。"""
+    parts: list[ContentPart] = []
+    pos = 0
+    for m in _ACTION_RE.finditer(text):
+        if m.start() > pos:
+            seg = text[pos:m.start()].strip()
+            if seg:
+                parts.append(ContentPart(kind="speech", text=seg))
+        action = (m.group(1) if m.group(1) is not None else m.group(2)) or ""
+        action = action.strip()
+        if action:
+            parts.append(ContentPart(kind="action", text=action))
+        pos = m.end()
+    tail = text[pos:].strip()
+    if tail:
+        parts.append(ContentPart(kind="speech", text=tail))
+    if not parts:
+        parts = [ContentPart(kind="speech", text=text.strip())]
+    return parts
+
+
 def _split_bubbles(body: str) -> tuple[list[str], list[float | None]]:
     """按分隔符切分气泡，并对齐每条气泡之前的显式停顿。"""
     # re.split 带捕获组时，分隔符捕获值会交错出现在结果里：
@@ -144,20 +196,24 @@ def _split_bubbles(body: str) -> tuple[list[str], list[float | None]]:
 
 def parse_turn_output(
     text: str, speaker: str | None = None
-) -> tuple[list[str], list[float | None], dict | None]:
-    """把一次调用的原始输出解析成 (bubbles, pause_hints, memory_delta)。
+) -> tuple[list[ParsedBubble], dict | None]:
+    """把一次调用的原始输出解析成 (bubbles: list[ParsedBubble], memory_delta)。
 
-    speaker 非空时，剥掉模型给自己台词加的 `[speaker]` / `speaker：` 前缀
-    （它是在模仿共享历史 `[发言者] 内容` 的渲染格式）；剥空的气泡会被丢弃。
+    步骤：切记忆增量 → 切气泡（含显式停顿）→ 每气泡内剥自名前缀（speaker 非空时）→
+    抽动作/语言归一成 parts。剥空的气泡丢弃；首条幸存气泡无前置停顿。
     """
     body, memory_delta = _extract_memory(text)
-    bubbles, hints = _split_bubbles(body)
-    if speaker:
-        cleaned, cleaned_hints = [], []
-        for b, h in zip(bubbles, hints):
-            nb = _strip_self_tag(b, speaker).strip()
-            if nb:
-                cleaned.append(nb)
-                cleaned_hints.append(h)
-        bubbles, hints = cleaned, cleaned_hints
-    return bubbles, hints, memory_delta
+    raw_bubbles, hints = _split_bubbles(body)
+
+    bubbles: list[ParsedBubble] = []
+    for raw, hint in zip(raw_bubbles, hints):
+        b = _strip_self_tag(raw, speaker).strip() if speaker else raw
+        if not b:
+            continue
+        parts = _extract_parts(b)
+        if not any(p.text.strip() for p in parts):
+            continue  # 剥完只剩空 → 丢弃
+        bubbles.append(ParsedBubble(parts=parts, pause_hint=hint))
+    if bubbles:
+        bubbles[0].pause_hint = None  # 首条幸存气泡无前置停顿
+    return bubbles, memory_delta
