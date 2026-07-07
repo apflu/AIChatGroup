@@ -9,13 +9,15 @@ def _store():
 def test_message_dedup_by_external_id():
     s = _store()
     rid = s.ensure_room("r1")
-    assert s.append_message(rid, "小丸子", "你好", external_id="c:1") is True
-    # 同一 external_id 再来一次 → 不插入
-    assert s.append_message(rid, "小丸子", "你好", external_id="c:1") is False
+    first = s.append_message(rid, "小丸子", "你好", external_id="c:1")
+    assert first is not None  # 返回新行 id
+    # 同一 external_id 再来一次 → 不插入，返回 None
+    assert s.append_message(rid, "小丸子", "你好", external_id="c:1") is None
     assert s.count_messages(rid) == 1
     # 无 external_id 的引擎自产气泡不受去重约束，可重复插入
-    assert s.append_message(rid, "阿福", "在") is True
-    assert s.append_message(rid, "阿福", "在") is True
+    id2 = s.append_message(rid, "阿福", "在")
+    id3 = s.append_message(rid, "阿福", "在")
+    assert id2 is not None and id3 is not None and id2 != id3  # id 单调递增
     assert s.count_messages(rid) == 3
 
 

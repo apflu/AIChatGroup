@@ -19,6 +19,8 @@ from .director import Director, ModelDirector, RoundRobinDirector
 from .domain import (
     Agent,
     ChatMessage,
+    ContentPart,
+    Message,
     PacingConfig,
     RoomState,
     TurnResult,
@@ -53,6 +55,8 @@ __version__ = "0.0.1"
 __all__ = [
     # domain
     "Agent",
+    "Message",
+    "ContentPart",
     "ChatMessage",
     "PacingConfig",
     "RoomState",

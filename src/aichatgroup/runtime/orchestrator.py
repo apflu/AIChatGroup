@@ -117,15 +117,17 @@ class Orchestrator:
         if msg.is_command or text.split(" ", 1)[0] in _COMMANDS:
             self._handle_command(text)
             return
-        # 去重 + 追加共享历史
+        # 去重 + 追加共享历史（store id 为权威 handle）
+        mid = None
         if self.store is not None and self.room_id is not None:
-            inserted = self.store.append_message(
+            mid = self.store.append_message(
                 self.room_id, msg.speaker, msg.text, external_id=msg.external_id
             )
-            if not inserted:
+            if mid is None:
                 logger.debug("摄入去重：external_id=%s 已存在，跳过", msg.external_id)
                 return
-        self.room.append(msg.speaker, msg.text)
+        meta = {"external_id": msg.external_id} if msg.external_id else None
+        self.room.append(msg.speaker, msg.text, id=mid, author_kind="human", meta=meta)
         logger.info("摄入 [%s] %s", msg.speaker, msg.text)
 
     def _handle_command(self, text: str) -> None:
@@ -188,9 +190,11 @@ class Orchestrator:
             if pause > 0:
                 await self._sleep(pause)
             await self.transport.send_text(agent, bubble)
-            self.room.append(agent.name, bubble)
+            # store id 为权威 handle；无 store 时 RoomState 自铸本地 id
+            mid = None
             if self.store is not None and self.room_id is not None:
-                self.store.append_message(self.room_id, agent.name, bubble)
+                mid = self.store.append_message(self.room_id, agent.name, bubble)
+            self.room.append(agent.name, bubble, id=mid)
         # 5) 合并记忆增量（尾部私有快照，不缓存）
         if memory_delta:
             merged = merge_memory(self.room.memory.get(agent.id, ""), memory_delta)

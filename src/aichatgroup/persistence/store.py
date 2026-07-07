@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from ..domain.types import ChatMessage, RoomState
+from ..domain.types import ContentPart, Message, RoomState
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS rooms (
@@ -69,26 +69,37 @@ class Store:
     # ---- messages ------------------------------------------------------
     def append_message(
         self, room_id: int, speaker: str, text: str, external_id: str | None = None
-    ) -> bool:
-        """追加一条共享历史。有 external_id 且重复时返回 False（不插入）。"""
+    ) -> int | None:
+        """追加一条共享历史，返回新行的 id（房间内稳定 handle）。
+
+        有 external_id 且重复时返回 None（不插入）——调用方据此判断是否为去重命中。
+        """
         if external_id is not None:
             exists = self.conn.execute(
                 "SELECT 1 FROM messages WHERE room_id = ? AND external_id = ?",
                 (room_id, external_id),
             ).fetchone()
             if exists is not None:
-                return False
-        self.conn.execute(
+                return None
+        cur = self.conn.execute(
             "INSERT INTO messages(room_id, external_id, speaker, text) VALUES (?, ?, ?, ?)",
             (room_id, external_id, speaker, text),
         )
         self.conn.commit()
-        return True
+        return int(cur.lastrowid)
 
-    def load_history(self, room_id: int, limit: int | None = None) -> list[ChatMessage]:
-        sql = "SELECT speaker, text FROM messages WHERE room_id = ? ORDER BY id"
+    def load_history(self, room_id: int, limit: int | None = None) -> list[Message]:
+        sql = "SELECT id, speaker, text, external_id FROM messages WHERE room_id = ? ORDER BY id"
         rows = self.conn.execute(sql, (room_id,)).fetchall()
-        msgs = [ChatMessage(speaker=r["speaker"], text=r["text"]) for r in rows]
+        msgs = [
+            Message(
+                id=int(r["id"]),
+                speaker=r["speaker"],
+                parts=[ContentPart(kind="speech", text=r["text"])],
+                meta={"external_id": r["external_id"]} if r["external_id"] else {},
+            )
+            for r in rows
+        ]
         return msgs[-limit:] if limit is not None else msgs
 
     def count_messages(self, room_id: int) -> int:
