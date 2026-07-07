@@ -3,7 +3,9 @@ from .markers import BUBBLE_SEPARATOR, MEMORY_MARKER
 from .types import (
     Agent,
     ChatMessage,
+    ContentPart,
     GatewayResponse,
+    Message,
     PacingConfig,
     RoomState,
     TurnResult,
@@ -15,6 +17,8 @@ __all__ = [
     "BUBBLE_SEPARATOR",
     "MEMORY_MARKER",
     "Agent",
+    "Message",
+    "ContentPart",
     "ChatMessage",
     "GatewayResponse",
     "PacingConfig",

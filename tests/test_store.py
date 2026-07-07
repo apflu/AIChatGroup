@@ -9,13 +9,15 @@ def _store():
 def test_message_dedup_by_external_id():
     s = _store()
     rid = s.ensure_room("r1")
-    assert s.append_message(rid, "小丸子", "你好", external_id="c:1") is True
-    # 同一 external_id 再来一次 → 不插入
-    assert s.append_message(rid, "小丸子", "你好", external_id="c:1") is False
+    first = s.append_message(rid, "小丸子", "你好", external_id="c:1")
+    assert first is not None  # 返回新行 id
+    # 同一 external_id 再来一次 → 不插入，返回 None
+    assert s.append_message(rid, "小丸子", "你好", external_id="c:1") is None
     assert s.count_messages(rid) == 1
     # 无 external_id 的引擎自产气泡不受去重约束，可重复插入
-    assert s.append_message(rid, "阿福", "在") is True
-    assert s.append_message(rid, "阿福", "在") is True
+    id2 = s.append_message(rid, "阿福", "在")
+    id3 = s.append_message(rid, "阿福", "在")
+    assert id2 is not None and id3 is not None and id2 != id3  # id 单调递增
     assert s.count_messages(rid) == 3
 
 
@@ -57,6 +59,20 @@ def test_trim_history_keeps_last_n():
     assert dropped == 7
     remaining = s.load_history(rid)
     assert [m.text for m in remaining] == ["第7句", "第8句", "第9句"]
+
+
+def test_reply_to_roundtrip_and_lookups():
+    s = _store()
+    rid = s.ensure_room("r1")
+    a = s.append_message(rid, "小丸子", "我请客！", external_id="c:10")
+    b = s.append_message(rid, "阿福", "那我不客气了", reply_to_id=a)
+    hist = s.load_history(rid)
+    assert hist[1].reply_to == a                       # reply_to_id 落列并下发
+    assert hist[0].meta["external_id"] == "c:10"        # external_id 下发到 meta
+    assert s.id_for_external(rid, "c:10") == a          # external → 内部 id
+    assert s.get_message(rid, a).text == "我请客！"      # 按 id 取回（超窗重注入用）
+    assert s.get_message(rid, 999) is None
+    assert s.id_for_external(rid, "c:none") is None
 
 
 def test_load_room_state_composes():

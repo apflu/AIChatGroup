@@ -30,6 +30,8 @@ class InboundMessage:
     text: str
     external_id: str | None = None
     is_command: bool = False
+    # 若这条是「回复某条消息」，被回复消息的 external_id（如 telegram chat:msgid）
+    reply_to_external_id: str | None = None
 
 
 @runtime_checkable
@@ -52,6 +54,11 @@ class Transport(Protocol):
         """以该角色的身份发出「正在输入」提示（可为 no-op）。"""
         ...
 
-    async def send_text(self, agent: Agent, text: str) -> None:
-        """以该角色的身份发出一条文本气泡。"""
+    async def send_text(
+        self, agent: Agent, text: str, reply_to_external_id: str | None = None
+    ) -> str | None:
+        """以该角色的身份发出一条文本气泡；可回复某条消息。
+
+        返回发出消息的 external_id（供后续消息回复它）；发送失败或无从获取时返回 None。
+        """
         ...

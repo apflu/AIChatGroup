@@ -64,9 +64,12 @@ class TelegramTransport:
         sender = (msg.from_user.full_name if msg.from_user else None) or "匿名"
         external_id = f"{msg.chat_id}:{msg.message_id}"
         is_command = text.strip().split(" ", 1)[0].lower() in self.command_prefixes
+        reply = msg.reply_to_message
+        reply_ext = f"{msg.chat_id}:{reply.message_id}" if reply is not None else None
         self._inbound.put_nowait(
             InboundMessage(
-                speaker=sender, text=text, external_id=external_id, is_command=is_command
+                speaker=sender, text=text, external_id=external_id,
+                is_command=is_command, reply_to_external_id=reply_ext,
             )
         )
 
@@ -96,12 +99,22 @@ class TelegramTransport:
         except Exception as exc:  # pragma: no cover
             logger.warning("send_typing(%s) 失败：%s", agent.name, exc)
 
-    async def send_text(self, agent: Agent, text: str) -> None:
+    async def send_text(
+        self, agent: Agent, text: str, reply_to_external_id: str | None = None
+    ) -> str | None:
         bot = self._agent_bots.get(agent.id)
         if bot is None:
             logger.warning("角色 %s 无 bot token，无法发送", agent.name)
-            return
+            return None
+        kwargs: dict = {"chat_id": self.chat_id, "text": text}
+        if reply_to_external_id:
+            try:
+                kwargs["reply_to_message_id"] = int(reply_to_external_id.split(":")[-1])
+            except ValueError:
+                pass
         try:
-            await bot.send_message(chat_id=self.chat_id, text=text)
+            sent = await bot.send_message(**kwargs)
+            return f"{self.chat_id}:{sent.message_id}"  # 供后续消息回复它
         except Exception as exc:  # pragma: no cover
             logger.warning("send_text(%s) 失败：%s", agent.name, exc)
+            return None

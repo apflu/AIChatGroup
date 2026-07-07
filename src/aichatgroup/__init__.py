@@ -19,6 +19,8 @@ from .director import Director, ModelDirector, RoundRobinDirector
 from .domain import (
     Agent,
     ChatMessage,
+    ContentPart,
+    Message,
     PacingConfig,
     RoomState,
     TurnResult,
@@ -33,6 +35,7 @@ from .engine import (
     resolve_pauses,
     run_turn,
 )
+from .observability import log_event
 from .gateway import (
     AnthropicGateway,
     GeminiGateway,
@@ -53,6 +56,8 @@ __version__ = "0.0.1"
 __all__ = [
     # domain
     "Agent",
+    "Message",
+    "ContentPart",
     "ChatMessage",
     "PacingConfig",
     "RoomState",
@@ -92,6 +97,7 @@ __all__ = [
     "Settings",
     "ProviderSpec",
     "load_provider_specs",
+    "log_event",
     # meta
     "__version__",
 ]

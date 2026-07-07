@@ -25,6 +25,7 @@ from ..engine.parsing import parse_turn_output
 from ..engine.pacing import resolve_pauses
 from ..engine.turn import merge_memory
 from ..gateway import ModelGateway
+from ..observability import log_event
 from ..prompt import build_prompt
 from ..persistence.store import Store
 from ..transport.base import InboundMessage, Transport
@@ -117,16 +118,55 @@ class Orchestrator:
         if msg.is_command or text.split(" ", 1)[0] in _COMMANDS:
             self._handle_command(text)
             return
-        # 去重 + 追加共享历史
+        # 若这条是回复某条消息，把被回复的 external_id 解析成内部 id
+        reply_to = self._internal_id_for_external(msg.reply_to_external_id)
+        # 去重 + 追加共享历史（store id 为权威 handle）
+        mid = None
         if self.store is not None and self.room_id is not None:
-            inserted = self.store.append_message(
-                self.room_id, msg.speaker, msg.text, external_id=msg.external_id
+            mid = self.store.append_message(
+                self.room_id, msg.speaker, msg.text,
+                external_id=msg.external_id, reply_to_id=reply_to,
             )
-            if not inserted:
+            if mid is None:
                 logger.debug("摄入去重：external_id=%s 已存在，跳过", msg.external_id)
                 return
-        self.room.append(msg.speaker, msg.text)
+        meta = {"external_id": msg.external_id} if msg.external_id else None
+        self.room.append(
+            msg.speaker, msg.text, id=mid, author_kind="human",
+            reply_to=reply_to, meta=meta,
+        )
         logger.info("摄入 [%s] %s", msg.speaker, msg.text)
+        log_event("ingest", speaker=msg.speaker, msg_id=mid, reply_to=reply_to)
+
+    # ---- 回复寻址辅助 --------------------------------------------------
+    def _internal_id_for_external(self, external_id: str | None) -> int | None:
+        if external_id is None:
+            return None
+        if self.store is not None and self.room_id is not None:
+            return self.store.id_for_external(self.room_id, external_id)
+        for m in reversed(self.room.history):        # 离线：扫近窗
+            if m.meta.get("external_id") == external_id:
+                return m.id
+        return None
+
+    def _external_for_internal_id(self, mid: int | None) -> str | None:
+        if mid is None:
+            return None
+        for m in reversed(self.room.history):        # 近窗优先
+            if m.id == mid:
+                return m.meta.get("external_id")
+        if self.store is not None and self.room_id is not None:
+            t = self.store.get_message(self.room_id, mid)
+            return t.meta.get("external_id") if t is not None else None
+        return None
+
+    def _resolve_message(self, mid: int):
+        if self.store is not None and self.room_id is not None:
+            return self.store.get_message(self.room_id, mid)
+        for m in self.room.history:
+            if m.id == mid:
+                return m
+        return None
 
     def _handle_command(self, text: str) -> None:
         cmd = text.split(" ", 1)[0].lower()
@@ -156,41 +196,65 @@ class Orchestrator:
                 await self._sleep(self.idle_poll_s)
                 continue
             agent = self._agent_by_id[speaker_id]
+            log_event("schedule", agent=agent.name, model=agent.model_id)
             try:
                 await self._speak(agent)
-            except Exception:
+            except Exception as exc:
                 # 单个 provider 抽风（鉴权失败/超时/限流）不应拖垮整屋子；
                 # 记下来、跳过这个角色本回合，其他角色照常热闹。
                 logger.exception("角色 %s 发言失败，跳过本回合", agent.name)
+                log_event("error", agent=agent.name, error=str(exc))
             turns += 1
             await self._maybe_compact()
             await self._sleep(self.turn_interval_s)
         return turns
 
     async def _speak(self, agent: Agent) -> None:
-        # 1) 组装 prompt（循环线程内，只读 room）
-        system, messages = build_prompt(self.world, self.room, agent)
+        # 1) 组装 prompt（循环线程内，只读 room）；resolve 供超窗回复内联重注入
+        system, messages = build_prompt(
+            self.world, self.room, agent, resolve=self._resolve_message
+        )
         # 2) 网络调用下放线程池（不碰 room，无竞争）
         resp = await asyncio.to_thread(
             self.gateway.complete, system, messages, agent.model_id, self.max_tokens
         )
         # 3) 解析 + 节奏（循环线程内）
-        bubbles, hints, memory_delta = parse_turn_output(resp.text, speaker=agent.name)
-        pauses = resolve_pauses(bubbles, hints, agent.pacing)
+        parsed, memory_delta = parse_turn_output(resp.text, speaker=agent.name)
+        pauses = resolve_pauses(
+            [pb.display for pb in parsed], [pb.pause_hint for pb in parsed], agent.pacing
+        )
         logger.info(
             "回合 %s bubbles=%d cache_read=%d cache_creation=%d",
-            agent.name, len(bubbles),
+            agent.name, len(parsed),
             resp.usage.cache_read_input_tokens, resp.usage.cache_creation_input_tokens,
         )
-        # 4) 逐条发送：typing → 等 pause → 发气泡 → 入历史（模拟真人连发）
-        for bubble, pause in zip(bubbles, pauses):
+        log_event(
+            "model_call", agent=agent.name, model=agent.model_id, bubbles=len(parsed),
+            input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
+            cache_read=resp.usage.cache_read_input_tokens,
+            cache_creation=resp.usage.cache_creation_input_tokens,
+        )
+        # 4) 逐条发送：typing → 等 pause → 发气泡（动作+语言渲染）→ 入历史（模拟真人连发）
+        for pb, pause in zip(parsed, pauses):
             await self.transport.send_typing(agent)
             if pause > 0:
                 await self._sleep(pause)
-            await self.transport.send_text(agent, bubble)
-            self.room.append(agent.name, bubble)
+            # 若这条气泡回复了历史某条，解析出被回复消息的 external_id 一起发给 transport
+            target_ext = self._external_for_internal_id(pb.reply_to)
+            ext = await self.transport.send_text(
+                agent, pb.display, reply_to_external_id=target_ext
+            )
+            # store id 为权威 handle；回填 external_id（供后续消息回复本条）+ reply_to_id
+            mid = None
             if self.store is not None and self.room_id is not None:
-                self.store.append_message(self.room_id, agent.name, bubble)
+                mid = self.store.append_message(
+                    self.room_id, agent.name, pb.display,
+                    external_id=ext, reply_to_id=pb.reply_to,
+                )
+            meta = {"external_id": ext} if ext else None
+            self.room.append(
+                agent.name, id=mid, parts=pb.parts, reply_to=pb.reply_to, meta=meta,
+            )
         # 5) 合并记忆增量（尾部私有快照，不缓存）
         if memory_delta:
             merged = merge_memory(self.room.memory.get(agent.id, ""), memory_delta)
@@ -205,6 +269,10 @@ class Orchestrator:
             self.gateway, self.world, self.room, self.compaction_model_id,
             max_history=self.max_history, keep_last=self.keep_last, max_tokens=self.max_tokens,
         )
-        if result.compacted and self.store is not None and self.room_id is not None:
-            self.store.save_summary(self.room_id, self.room.long_term_summary, self.room.objective_relations)
-            self.store.trim_history(self.room_id, self.keep_last)
+        if result.compacted:
+            log_event("compaction", dropped=result.dropped)
+            if self.store is not None and self.room_id is not None:
+                self.store.save_summary(
+                    self.room_id, self.room.long_term_summary, self.room.objective_relations
+                )
+                self.store.trim_history(self.room_id, self.keep_last)

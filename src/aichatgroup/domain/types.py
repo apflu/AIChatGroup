@@ -63,14 +63,64 @@ class Agent:
 
 
 @dataclass
-class ChatMessage:
-    """共享历史里的一条消息。speaker 是显示名（角色名或人类 PL 名）。"""
+class ContentPart:
+    """消息内容的一段。动作/语言分离就落在这（未来可加 sticker/tool_* kind）。"""
 
-    speaker: str
+    kind: str          # "speech" | "action" | "sticker"
     text: str
 
-    def render(self) -> str:
-        return f"[{self.speaker}] {self.text}"
+
+def render_parts(parts: "list[ContentPart]") -> str:
+    """把 parts 渲染成给模型看/往外发的文本：动作用中文括号、贴纸标注、语言裸文本。
+
+    纯 speech 时输出 == 语言原文 → 与旧 `text` 逐字节一致，保共享缓存前缀不变式。
+    """
+    out = []
+    for p in parts:
+        if p.kind == "action":
+            out.append(f"（{p.text}）")
+        elif p.kind == "sticker":
+            out.append(f"[贴纸:{p.text}]")
+        else:
+            out.append(p.text)
+    return "".join(out)
+
+
+@dataclass
+class Message:
+    """共享历史里的一条消息 —— 粒度 = 一条气泡（或一条人类消息 / sticker）。
+
+    id 是房间内**稳定单调**的标识（有 store 时来自 messages.id；离线时由 RoomState 计数器给），
+    既是持久主键、也是模型回复寻址用的 handle。speaker 是显示名（角色名或人类 PL 名）。
+    parts 承载动作/语言分离；reply_to 指向另一条 Message.id；meta 是开放逃生舱
+    （external_id / turn / pause_before / model / ts …）。
+    """
+
+    id: int
+    speaker: str
+    parts: list[ContentPart] = field(default_factory=list)
+    author_kind: str = "agent"          # agent | human | system
+    reply_to: int | None = None
+    meta: dict = field(default_factory=dict)
+
+    @property
+    def text(self) -> str:
+        """便利属性：拼接全部 speech 段（供日志 / TTS / 兼容）。不含动作。"""
+        return "".join(p.text for p in self.parts if p.kind == "speech")
+
+    def render(self, reply_note: str = "") -> str:
+        """序列化进历史：`⟦id⟧ [speaker] （回…）（动作）语言`。
+
+        `⟦id⟧` 是稳定 handle，模型据此用 `{{REPLY:id}}` 回复某条。reply_note 由 builder 传入
+        （被回复消息的定长引用），render 自身不查别的消息。id/speaker/parts 跨 agent 相同、
+        跨轮稳定 → 前缀逐字节一致，保共享缓存不变式。
+        """
+        note = f"{reply_note} " if reply_note else ""
+        return f"⟦{self.id}⟧ [{self.speaker}] {note}{render_parts(self.parts)}"
+
+
+# 迁移期别名：保住公共导出与旧引用，一个周期后可移除。
+ChatMessage = Message
 
 
 @dataclass
@@ -81,9 +131,16 @@ class RoomState:
     long_term_summary: str = ""
     objective_relations: str = ""
     # 第 2 层：近期共享历史（append-only）
-    history: list[ChatMessage] = field(default_factory=list)
+    history: list[Message] = field(default_factory=list)
     # 第 3 层尾部：每 Agent 私有记忆快照（agent_id -> 文本），每轮整块替换
     memory: dict[str, str] = field(default_factory=dict)
+    # 离线场景（无 store）铸造消息 id 的计数器；有 store 时由传入的显式 id 决定。
+    _next_id: int = field(default=1, repr=False)
+
+    def __post_init__(self) -> None:
+        # 从已有历史（如 store 载入）同步计数器，避免 id 冲突。
+        if self.history:
+            self._next_id = max(m.id for m in self.history) + 1
 
     def render_layer1(self) -> str:
         parts = []
@@ -93,8 +150,35 @@ class RoomState:
             parts.append(f"# 客观关系图谱\n{self.objective_relations.strip()}")
         return "\n\n".join(parts) if parts else "(暂无长期摘要)"
 
-    def append(self, speaker: str, text: str) -> None:
-        self.history.append(ChatMessage(speaker=speaker, text=text))
+    def append(
+        self,
+        speaker: str,
+        text: str | None = None,
+        *,
+        parts: list[ContentPart] | None = None,
+        id: int | None = None,
+        author_kind: str = "agent",
+        reply_to: int | None = None,
+        meta: dict | None = None,
+    ) -> Message:
+        """追加一条消息，返回它。
+
+        id 省略时由内部计数器铸造（离线/测试）；有 store 时调用方传入 store 分配的 id。
+        parts 省略时按 text 包成单个 speech 段（Phase A 的等价行为）。
+        """
+        if id is None:
+            id = self._next_id
+            self._next_id += 1
+        else:
+            self._next_id = max(self._next_id, id + 1)
+        if parts is None:
+            parts = [ContentPart(kind="speech", text=text or "")]
+        msg = Message(
+            id=id, speaker=speaker, parts=parts,
+            author_kind=author_kind, reply_to=reply_to, meta=meta or {},
+        )
+        self.history.append(msg)
+        return msg
 
 
 @dataclass
