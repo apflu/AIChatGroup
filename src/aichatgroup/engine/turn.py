@@ -43,7 +43,7 @@ def run_turn(
     """
     system, messages = build_prompt(world, room, agent, director_instruction)
     resp = gateway.complete(system, messages, agent.model_id, max_tokens=max_tokens)
-    bubbles, pause_hints, memory_delta = parse_turn_output(resp.text)
+    bubbles, pause_hints, memory_delta = parse_turn_output(resp.text, speaker=agent.name)
     pauses = resolve_pauses(bubbles, pause_hints, agent.pacing)
 
     logger.info(

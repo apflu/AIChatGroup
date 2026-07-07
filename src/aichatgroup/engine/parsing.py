@@ -100,6 +100,22 @@ def _strip_code_fence(raw: str) -> str:
     return raw.strip()
 
 
+# 模型模仿历史里 `[发言者] 内容` 的格式，给自己台词加的前缀。只剥它**自己**的名字，
+# 形如 `[小诗]`/`[小诗]：`/`小诗：`；不碰 `[叹气]` 这类舞台提示（名字不匹配就不动）。
+_SELF_TAG_TEMPLATES = (
+    r"^\s*\[\s*{n}\s*\]\s*[:：]?\s*",
+    r"^\s*{n}\s*[:：]\s*",
+)
+
+
+def _strip_self_tag(bubble: str, name: str) -> str:
+    for tmpl in _SELF_TAG_TEMPLATES:
+        new = re.sub(tmpl.format(n=re.escape(name)), "", bubble, count=1)
+        if new != bubble:
+            return new.lstrip()
+    return bubble
+
+
 def _split_bubbles(body: str) -> tuple[list[str], list[float | None]]:
     """按分隔符切分气泡，并对齐每条气泡之前的显式停顿。"""
     # re.split 带捕获组时，分隔符捕获值会交错出现在结果里：
@@ -126,8 +142,22 @@ def _split_bubbles(body: str) -> tuple[list[str], list[float | None]]:
     return bubbles, hints
 
 
-def parse_turn_output(text: str) -> tuple[list[str], list[float | None], dict | None]:
-    """把一次调用的原始输出解析成 (bubbles, pause_hints, memory_delta)。"""
+def parse_turn_output(
+    text: str, speaker: str | None = None
+) -> tuple[list[str], list[float | None], dict | None]:
+    """把一次调用的原始输出解析成 (bubbles, pause_hints, memory_delta)。
+
+    speaker 非空时，剥掉模型给自己台词加的 `[speaker]` / `speaker：` 前缀
+    （它是在模仿共享历史 `[发言者] 内容` 的渲染格式）；剥空的气泡会被丢弃。
+    """
     body, memory_delta = _extract_memory(text)
     bubbles, hints = _split_bubbles(body)
+    if speaker:
+        cleaned, cleaned_hints = [], []
+        for b, h in zip(bubbles, hints):
+            nb = _strip_self_tag(b, speaker).strip()
+            if nb:
+                cleaned.append(nb)
+                cleaned_hints.append(h)
+        bubbles, hints = cleaned, cleaned_hints
     return bubbles, hints, memory_delta

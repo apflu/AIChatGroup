@@ -86,6 +86,36 @@ def test_bad_memory_is_ignored():
     assert mem is None
 
 
+def test_strip_self_speaker_tag():
+    # 模型模仿历史 [发言者] 格式给自己台词加前缀，应剥掉
+    text = "[小诗] 哎呀你好呀{{SEPARATOR}}[小诗]在呢"
+    bubbles, _, _ = parse_turn_output(text, speaker="小诗")
+    assert bubbles == ["哎呀你好呀", "在呢"]
+
+
+def test_strip_self_tag_colon_forms():
+    assert parse_turn_output("[小诗]：你好", speaker="小诗")[0] == ["你好"]
+    assert parse_turn_output("小诗：你好", speaker="小诗")[0] == ["你好"]
+    assert parse_turn_output("小诗:hi", speaker="小诗")[0] == ["hi"]
+
+
+def test_self_tag_not_stripped_without_speaker():
+    # 不传 speaker → 保持原样（向后兼容）
+    assert parse_turn_output("[小诗] 你好")[0] == ["[小诗] 你好"]
+
+
+def test_other_bracket_tags_are_kept():
+    # 名字不匹配的方括号（如舞台提示）不该被剥
+    bubbles, _, _ = parse_turn_output("[叹气] 累了", speaker="小诗")
+    assert bubbles == ["[叹气] 累了"]
+
+
+def test_bubble_that_is_only_self_tag_is_dropped():
+    text = "[小诗]{{SEPARATOR}}真的来了"
+    bubbles, _, _ = parse_turn_output(text, speaker="小诗")
+    assert bubbles == ["真的来了"]
+
+
 def test_dashes_are_no_longer_separators():
     text = "这是 --- 一段话\n第二行还有 ---"
     bubbles, _, _ = parse_turn_output(text)

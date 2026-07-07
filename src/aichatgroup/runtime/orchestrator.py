@@ -175,7 +175,7 @@ class Orchestrator:
             self.gateway.complete, system, messages, agent.model_id, self.max_tokens
         )
         # 3) 解析 + 节奏（循环线程内）
-        bubbles, hints, memory_delta = parse_turn_output(resp.text)
+        bubbles, hints, memory_delta = parse_turn_output(resp.text, speaker=agent.name)
         pauses = resolve_pauses(bubbles, hints, agent.pacing)
         logger.info(
             "回合 %s bubbles=%d cache_read=%d cache_creation=%d",
