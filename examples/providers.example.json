@@ -1,0 +1,27 @@
+{
+  "providers": [
+    {
+      "alias": "deepseek",
+      "type": "openai",
+      "provider_url": "https://api.deepseek.com/v1",
+      "api_key_env": "DEEPSEEK_API_KEY"
+    },
+    {
+      "alias": "groq",
+      "type": "openai",
+      "provider_url": "https://api.groq.com/openai/v1",
+      "api_key_env": "GROQ_API_KEY"
+    },
+    {
+      "alias": "local",
+      "type": "openai",
+      "provider_url": "http://localhost:8000/v1",
+      "api_key_env": "LOCAL_LLM_KEY"
+    },
+    {
+      "alias": "my-gemini",
+      "type": "gemini",
+      "api_key_env": "GEMINI_API_KEY"
+    }
+  ]
+}

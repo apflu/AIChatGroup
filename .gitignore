@@ -1,5 +1,6 @@
 spec_raw/
 preset/
+/providers.json
 
 __pycache__/
 *.py[cod]

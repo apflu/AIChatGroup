@@ -1,0 +1,43 @@
+{
+  "room_key": "buyeport",
+  "world": {
+    "bible": "这里是「不夜港」——一座永远喧闹的港口酒馆。三教九流在此往来，水手、商人、吟游诗人与流浪法师同桌而坐。管理员『老陈』维持着秩序。",
+    "rules": "所有角色遵守世界书设定，不得凭空造出世界中不存在的事物；彼此吵吵闹闹但不越界替他人发言；管理员有最终裁量权。"
+  },
+  "room": {
+    "long_term_summary": "集市日的傍晚，酒馆比平日更喧闹。",
+    "objective_relations": "小丸子与阿福是老相识；小诗是新来的吟游诗人。"
+  },
+  "agents": [
+    {
+      "id": "a1",
+      "name": "小丸子",
+      "model_id": "clwd#claude-sonnet-5",
+      "base_prompt": "你是酒馆常客。",
+      "character_card": "活泼、话痨、爱起哄。",
+      "pacing": { "base_pause_s": 0.2, "per_char_s": 0.03, "explicit_scale": 0.6 },
+      "bot_token_env": "TG_TOKEN_CHAR_1"
+    },
+    {
+      "id": "a2",
+      "name": "阿福",
+      "model_id": "clwd#claude-opus-4-6",
+      "base_prompt": "你是退役水手。",
+      "character_card": "沉稳、爱讲道理、偶尔毒舌。",
+      "pacing": { "base_pause_s": 0.8, "per_char_s": 0.09, "explicit_scale": 1.5 },
+      "bot_token_env": "TG_TOKEN_CHAR_2"
+    },
+    {
+      "id": "a3",
+      "name": "小诗",
+      "model_id": "clwd#claude-sonnet-5",
+      "base_prompt": "你是吟游诗人。",
+      "character_card": "浪漫、爱接话、总想押韵。",
+      "bot_token_env": "TG_TOKEN_CHAR_3"
+    }
+  ],
+  "telegram": {
+    "observer_token_env": "TG_TOKEN_OBSERVER",
+    "chat_id_env": "TG_CHAT_ID"
+  }
+}

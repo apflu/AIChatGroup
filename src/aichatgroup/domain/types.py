@@ -25,7 +25,7 @@ class PacingConfig:
 
     停顿 = 模拟「打完上一条、下一条冒出来」之间的间隔（M1 Telegram 适配层会据此
     发 typing 提示 + sleep）。缺省按下一条气泡长度推断；模型也可在
-    `<<SEPARATOR:秒>>` 里显式指定，显式值经 explicit_scale 缩放后采用。
+    `{{SEPARATOR:秒}}` 里显式指定，显式值经 explicit_scale 缩放后采用。
 
     这是「让推断与角色性格接驳」的第一个落点：急性子把 per_char_s / explicit_scale
     调小、慢性子调大。后续其他涉及推断的行为（语速、话痨程度……）应循同一模式，

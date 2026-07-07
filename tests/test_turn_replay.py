@@ -17,11 +17,11 @@ def _setup():
 
     gw = MockGateway()
     gw.push_script("小丸子", [
-        '大家好呀！<<SEPARATOR>>今天真热闹\n<<MEMORY>>{"mood": "兴奋"}',
+        '大家好呀！{{SEPARATOR}}今天真热闹\n{{MEMORY}}{"mood": "兴奋"}',
         '我先去逛逛~',
     ])
     gw.push_script("阿福", [
-        '来啦。<<SEPARATOR>>慢点跑',
+        '来啦。{{SEPARATOR}}慢点跑',
         '等等我。',
     ])
     return world, room, alice, bob, gw

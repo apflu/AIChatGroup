@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "aichatgroup"
 version = "0.0.1"
-description = "多模型 AI 群聊引擎 —— transport-agnostic core (M0 骨架)"
+description = "多模型 AI 群聊引擎 —— transport-agnostic core engine"
 requires-python = ">=3.10"
 dependencies = [
     "anthropic>=0.40",
@@ -13,6 +13,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# M1 Telegram 落地面；懒加载，仅 scripts/run_telegram.py 需要
+telegram = ["python-telegram-bot>=21"]
+# 其他 provider；均懒加载，配了对应 key 才需要
+openai = ["openai>=1.40"]        # 也覆盖所有 OpenAI 兼容端点
+gemini = ["google-genai>=0.3"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

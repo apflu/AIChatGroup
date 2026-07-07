@@ -45,7 +45,7 @@ def test_tail_contains_persona_memory_director():
     assert "活泼、爱吵闹。" in tail          # 角色卡
     assert "上一轮很热闹" in tail            # 私有记忆
     assert "制造一点张力" in tail            # 导演指令
-    assert "<<MEMORY>>" in tail             # 输出契约
+    assert "{{MEMORY}}" in tail             # 输出契约
 
 
 def test_empty_history_still_has_tail():

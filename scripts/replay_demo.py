@@ -56,19 +56,19 @@ def make_mock_gateway(agents: list[Agent], turns: int) -> MockGateway:
     gw = MockGateway()
     scripts = {
         "小丸子": [
-            "哟！今天人可真多呀~<<SEPARATOR>>老陈，来壶好酒！\n<<MEMORY>>{\"mood\": \"兴奋\", \"want\": \"喝酒\"}",
-            "阿福你又在讲大道理啦？<<SEPARATOR>>哈哈哈",
+            "哟！今天人可真多呀~{{SEPARATOR}}老陈，来壶好酒！\n{{MEMORY}}{\"mood\": \"兴奋\", \"want\": \"喝酒\"}",
+            "阿福你又在讲大道理啦？{{SEPARATOR}}哈哈哈",
             "小诗快来一首！",
         ],
         "阿福": [
             "急什么，酒要慢慢品。",
-            "年轻人就是毛躁。<<SEPARATOR>>不过……今天是挺热闹。",
+            "年轻人就是毛躁。{{SEPARATOR}}不过……今天是挺热闹。",
             "行吧，听你的。",
         ],
         "小诗": [
             "港口灯火明，杯中岁月长~",
             "让我想想韵脚……",
-            "热闹一场终须散，且把今宵付笑谈。\n<<MEMORY>>{\"line\": \"付笑谈\"}",
+            "热闹一场终须散，且把今宵付笑谈。\n{{MEMORY}}{\"line\": \"付笑谈\"}",
         ],
     }
     for agent in agents:
