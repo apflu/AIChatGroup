@@ -162,6 +162,28 @@ def test_dashes_are_no_longer_separators():
     assert texts(bubbles) == ["这是 --- 一段话\n第二行还有 ---"]
 
 
+# ---- 回复标记 / 句柄回显 ----------------------------------------------
+def test_reply_marker_extracted():
+    bubbles, _ = parse_turn_output("{{REPLY:37}}那我不客气了")
+    (b,) = bubbles
+    assert b.reply_to == 37
+    assert b.text == "那我不客气了"
+
+
+def test_reply_marker_with_action_and_self_tag():
+    bubbles, _ = parse_turn_output("[阿福] {{REPLY:12}}*点头* 好", speaker="阿福")
+    (b,) = bubbles
+    assert b.reply_to == 12
+    assert [(p.kind, p.text) for p in b.parts] == [("action", "点头"), ("speech", "好")]
+
+
+def test_echoed_handle_is_stripped():
+    # 模型误把历史里的 ⟦37⟧ 句柄写进台词 → 剥掉，且不当成回复
+    bubbles, _ = parse_turn_output("⟦37⟧ 你好", speaker="小诗")
+    assert texts(bubbles) == ["你好"]
+    assert bubbles[0].reply_to is None
+
+
 # ---- fuzz / property：乱序穿插标记不崩、语义稳定 ----------------------
 def test_fuzz_marker_soup_never_crashes():
     import random

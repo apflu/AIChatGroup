@@ -137,6 +137,19 @@ def _strip_self_tag(bubble: str, name: str) -> str:
     return bubble
 
 
+# 模型误回显历史里的 ⟦id⟧ 句柄（那是给它看的，不该写进台词），从气泡首剥掉。
+_HANDLE_ECHO_RE = re.compile(r"^\s*⟦\s*\d+\s*⟧\s*")
+# 回复标记：气泡首 `{{REPLY:37}}` → reply_to=37。
+_REPLY_RE = re.compile(r"^\s*\{\{\s*REPLY\s*:\s*(\d+)\s*\}\}\s*", re.IGNORECASE)
+
+
+def _extract_reply(bubble: str) -> tuple[str, int | None]:
+    m = _REPLY_RE.match(bubble)
+    if m:
+        return bubble[m.end():], int(m.group(1))
+    return bubble, None
+
+
 # 动作跨度：`{{ACTION}}…{{/ACTION}}`（容忍大小写/空白）或 RP 惯用的单星号 `*…*`。
 # 其余为语言。两者都容忍，内部统一归到 ContentPart。
 _ACTION_RE = re.compile(
@@ -207,13 +220,17 @@ def parse_turn_output(
 
     bubbles: list[ParsedBubble] = []
     for raw, hint in zip(raw_bubbles, hints):
-        b = _strip_self_tag(raw, speaker).strip() if speaker else raw
+        b = _HANDLE_ECHO_RE.sub("", raw, count=1)      # 剥误回显的 ⟦id⟧
+        if speaker:
+            b = _strip_self_tag(b, speaker)
+        b, reply_id = _extract_reply(b.strip())        # 抽 {{REPLY:id}}
+        b = b.strip()
         if not b:
             continue
         parts = _extract_parts(b)
         if not any(p.text.strip() for p in parts):
             continue  # 剥完只剩空 → 丢弃
-        bubbles.append(ParsedBubble(parts=parts, pause_hint=hint))
+        bubbles.append(ParsedBubble(parts=parts, pause_hint=hint, reply_to=reply_id))
     if bubbles:
         bubbles[0].pause_hint = None  # 首条幸存气泡无前置停顿
     return bubbles, memory_delta

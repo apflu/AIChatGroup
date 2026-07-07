@@ -108,10 +108,15 @@ class Message:
         """便利属性：拼接全部 speech 段（供日志 / TTS / 兼容）。不含动作。"""
         return "".join(p.text for p in self.parts if p.kind == "speech")
 
-    def render(self) -> str:
-        # 纯 speech 时 == `[speaker] text`，逐字节等价旧格式 → 保共享缓存前缀不变式。
-        # 含动作时把 （动作） 一并渲染进历史，供其他 agent 看到。（⟦id⟧ 句柄在 Phase C 引入）
-        return f"[{self.speaker}] {render_parts(self.parts)}"
+    def render(self, reply_note: str = "") -> str:
+        """序列化进历史：`⟦id⟧ [speaker] （回…）（动作）语言`。
+
+        `⟦id⟧` 是稳定 handle，模型据此用 `{{REPLY:id}}` 回复某条。reply_note 由 builder 传入
+        （被回复消息的定长引用），render 自身不查别的消息。id/speaker/parts 跨 agent 相同、
+        跨轮稳定 → 前缀逐字节一致，保共享缓存不变式。
+        """
+        note = f"{reply_note} " if reply_note else ""
+        return f"⟦{self.id}⟧ [{self.speaker}] {note}{render_parts(self.parts)}"
 
 
 # 迁移期别名：保住公共导出与旧引用，一个周期后可移除。

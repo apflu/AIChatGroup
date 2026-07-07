@@ -14,8 +14,10 @@ from .base import InboundMessage
 class InMemoryTransport:
     def __init__(self) -> None:
         self._inbound: asyncio.Queue[InboundMessage] = asyncio.Queue()
-        # 发送记录：(agent_id, text)，按实际发出顺序
+        # 发送记录：(agent_id, text)，按实际发出顺序（保持简单形状，供既有断言）
         self.sent: list[tuple[str, str]] = []
+        # 完整发送记录：含 reply 与合成 external_id（回复相关断言用）
+        self.sent_records: list[dict] = []
         # typing 提示记录：agent_id
         self.typing_calls: list[str] = []
         self.started = False
@@ -37,5 +39,13 @@ class InMemoryTransport:
     async def send_typing(self, agent: Agent) -> None:
         self.typing_calls.append(agent.id)
 
-    async def send_text(self, agent: Agent, text: str) -> None:
+    async def send_text(
+        self, agent: Agent, text: str, reply_to_external_id: str | None = None
+    ) -> str:
+        ext = f"mem:{len(self.sent)}"   # 合成稳定 external_id（不依赖时钟/随机）
         self.sent.append((agent.id, text))
+        self.sent_records.append({
+            "agent_id": agent.id, "text": text,
+            "reply_to": reply_to_external_id, "external_id": ext,
+        })
+        return ext

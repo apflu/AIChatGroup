@@ -61,6 +61,20 @@ def test_trim_history_keeps_last_n():
     assert [m.text for m in remaining] == ["第7句", "第8句", "第9句"]
 
 
+def test_reply_to_roundtrip_and_lookups():
+    s = _store()
+    rid = s.ensure_room("r1")
+    a = s.append_message(rid, "小丸子", "我请客！", external_id="c:10")
+    b = s.append_message(rid, "阿福", "那我不客气了", reply_to_id=a)
+    hist = s.load_history(rid)
+    assert hist[1].reply_to == a                       # reply_to_id 落列并下发
+    assert hist[0].meta["external_id"] == "c:10"        # external_id 下发到 meta
+    assert s.id_for_external(rid, "c:10") == a          # external → 内部 id
+    assert s.get_message(rid, a).text == "我请客！"      # 按 id 取回（超窗重注入用）
+    assert s.get_message(rid, 999) is None
+    assert s.id_for_external(rid, "c:none") is None
+
+
 def test_load_room_state_composes():
     s = _store()
     rid = s.ensure_room("r1")

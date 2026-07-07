@@ -23,7 +23,7 @@ ROADMAP —— 向 SillyTavern 预设结构靠拢：
 from __future__ import annotations
 
 from ..domain.markers import BUBBLE_SEPARATOR, MEMORY_MARKER
-from ..domain.types import Agent, RoomState, WorldBook
+from ..domain.types import Agent, RoomState, WorldBook, render_parts
 
 # 返回给 Gateway 的结构：system 为 block 列表，messages 为 {role, content} 列表。
 SystemBlock = dict
@@ -57,28 +57,53 @@ def build_tail(agent: Agent, memory_text: str, director_instruction: str) -> str
     return "\n\n".join(parts)
 
 
+_QUOTE_LEN = 12  # 被回复消息内联引用的定长截断
+
+
+def _reply_note(reply_to, window_map: dict, resolve) -> str:
+    """一条消息回复 ⟦reply_to⟧ 时，渲染进历史的定长引用。
+
+    目标在近窗→直接引；已滑出→用 resolve 从 store 取回（"超窗内联重注入"）。截断定长 →
+    对同一目标恒定 → 保共享缓存前缀确定性。目标彻底找不到（如已被 compaction 删）→ 仅标 ⟦id⟧。
+    """
+    if reply_to is None:
+        return ""
+    target = window_map.get(reply_to)
+    if target is None and resolve is not None:
+        target = resolve(reply_to)
+    if target is None:
+        return f"（回⟦{reply_to}⟧）"
+    snippet = (target.text or render_parts(target.parts)).strip()[:_QUOTE_LEN]
+    return f"（回⟦{reply_to}⟧「{snippet}…」）" if snippet else f"（回⟦{reply_to}⟧）"
+
+
 def build_prompt(
     world: WorldBook,
     room: RoomState,
     agent: Agent,
     director_instruction: str = "",
+    resolve: "Callable[[int], object] | None" = None,
 ) -> tuple[list[SystemBlock], list[Message]]:
-    """组装一次调用的 (system_blocks, messages)。"""
+    """组装一次调用的 (system_blocks, messages)。
+
+    resolve(id)->Message|None 用于把「超出近窗的被回复消息」取回内联引用（通常由 store 提供）。
+    """
     system: list[SystemBlock] = [
         _cache(world.render()),          # breakpoint 1
         _cache(room.render_layer1()),    # breakpoint 2
     ]
 
+    window_map = {m.id: m for m in room.history}
     messages: list[Message] = []
     last = len(room.history) - 1
     for i, msg in enumerate(room.history):
+        note = _reply_note(msg.reply_to, window_map, resolve)
+        rendered = msg.render(reply_note=note)
         if i == last:
             # 滚动 breakpoint 3：cache_control 挂在最后一条历史消息上
-            messages.append(
-                {"role": "user", "content": [_cache(msg.render())]}
-            )
+            messages.append({"role": "user", "content": [_cache(rendered)]})
         else:
-            messages.append({"role": "user", "content": msg.render()})
+            messages.append({"role": "user", "content": rendered})
 
     tail = build_tail(agent, room.memory.get(agent.id, ""), director_instruction)
     messages.append({"role": "user", "content": tail})  # 尾部，不缓存

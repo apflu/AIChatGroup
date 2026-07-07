@@ -31,3 +31,7 @@ MEMORY_MARKER = "{{MEMORY}}"
 # 其余为语言。解析统一归到 ContentPart(kind=action|speech)（见 engine/parsing.py）。
 ACTION_OPEN = "{{ACTION}}"
 ACTION_CLOSE = "{{/ACTION}}"
+
+# 回复寻址：模型在一条气泡开头写 `{{REPLY:37}}` 表示回复历史里 ⟦37⟧ 那条。
+# 引擎剥掉标记、把内部 id 存进该气泡的 reply_to（见 engine/parsing.py）。
+REPLY_MARKER = "{{REPLY}}"

@@ -117,18 +117,54 @@ class Orchestrator:
         if msg.is_command or text.split(" ", 1)[0] in _COMMANDS:
             self._handle_command(text)
             return
+        # 若这条是回复某条消息，把被回复的 external_id 解析成内部 id
+        reply_to = self._internal_id_for_external(msg.reply_to_external_id)
         # 去重 + 追加共享历史（store id 为权威 handle）
         mid = None
         if self.store is not None and self.room_id is not None:
             mid = self.store.append_message(
-                self.room_id, msg.speaker, msg.text, external_id=msg.external_id
+                self.room_id, msg.speaker, msg.text,
+                external_id=msg.external_id, reply_to_id=reply_to,
             )
             if mid is None:
                 logger.debug("摄入去重：external_id=%s 已存在，跳过", msg.external_id)
                 return
         meta = {"external_id": msg.external_id} if msg.external_id else None
-        self.room.append(msg.speaker, msg.text, id=mid, author_kind="human", meta=meta)
+        self.room.append(
+            msg.speaker, msg.text, id=mid, author_kind="human",
+            reply_to=reply_to, meta=meta,
+        )
         logger.info("摄入 [%s] %s", msg.speaker, msg.text)
+
+    # ---- 回复寻址辅助 --------------------------------------------------
+    def _internal_id_for_external(self, external_id: str | None) -> int | None:
+        if external_id is None:
+            return None
+        if self.store is not None and self.room_id is not None:
+            return self.store.id_for_external(self.room_id, external_id)
+        for m in reversed(self.room.history):        # 离线：扫近窗
+            if m.meta.get("external_id") == external_id:
+                return m.id
+        return None
+
+    def _external_for_internal_id(self, mid: int | None) -> str | None:
+        if mid is None:
+            return None
+        for m in reversed(self.room.history):        # 近窗优先
+            if m.id == mid:
+                return m.meta.get("external_id")
+        if self.store is not None and self.room_id is not None:
+            t = self.store.get_message(self.room_id, mid)
+            return t.meta.get("external_id") if t is not None else None
+        return None
+
+    def _resolve_message(self, mid: int):
+        if self.store is not None and self.room_id is not None:
+            return self.store.get_message(self.room_id, mid)
+        for m in self.room.history:
+            if m.id == mid:
+                return m
+        return None
 
     def _handle_command(self, text: str) -> None:
         cmd = text.split(" ", 1)[0].lower()
@@ -170,8 +206,10 @@ class Orchestrator:
         return turns
 
     async def _speak(self, agent: Agent) -> None:
-        # 1) 组装 prompt（循环线程内，只读 room）
-        system, messages = build_prompt(self.world, self.room, agent)
+        # 1) 组装 prompt（循环线程内，只读 room）；resolve 供超窗回复内联重注入
+        system, messages = build_prompt(
+            self.world, self.room, agent, resolve=self._resolve_message
+        )
         # 2) 网络调用下放线程池（不碰 room，无竞争）
         resp = await asyncio.to_thread(
             self.gateway.complete, system, messages, agent.model_id, self.max_tokens
@@ -191,12 +229,22 @@ class Orchestrator:
             await self.transport.send_typing(agent)
             if pause > 0:
                 await self._sleep(pause)
-            await self.transport.send_text(agent, pb.display)
-            # store id 为权威 handle；无 store 时 RoomState 自铸本地 id
+            # 若这条气泡回复了历史某条，解析出被回复消息的 external_id 一起发给 transport
+            target_ext = self._external_for_internal_id(pb.reply_to)
+            ext = await self.transport.send_text(
+                agent, pb.display, reply_to_external_id=target_ext
+            )
+            # store id 为权威 handle；回填 external_id（供后续消息回复本条）+ reply_to_id
             mid = None
             if self.store is not None and self.room_id is not None:
-                mid = self.store.append_message(self.room_id, agent.name, pb.display)
-            self.room.append(agent.name, id=mid, parts=pb.parts, reply_to=pb.reply_to)
+                mid = self.store.append_message(
+                    self.room_id, agent.name, pb.display,
+                    external_id=ext, reply_to_id=pb.reply_to,
+                )
+            meta = {"external_id": ext} if ext else None
+            self.room.append(
+                agent.name, id=mid, parts=pb.parts, reply_to=pb.reply_to, meta=meta,
+            )
         # 5) 合并记忆增量（尾部私有快照，不缓存）
         if memory_delta:
             merged = merge_memory(self.room.memory.get(agent.id, ""), memory_delta)
