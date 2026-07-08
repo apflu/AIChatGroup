@@ -21,6 +21,7 @@ from ...domain.conversation import (
 )
 from ...domain.types import RoomState
 from ...io.gateway import ModelGateway
+from ...observability import log_model_raw
 from ...prompts import load as load_prompt, render as render_prompt
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,7 @@ class ModelStoryteller:
                 model_id=self.model_id,
                 max_tokens=256,
             )
+            log_model_raw("storyteller", resp.text)
             return self._parse(resp.text)
         except Exception as exc:  # 网络/模型异常 → 保守回落闲聊
             logger.warning("storyteller 模型调用失败，回落闲聊：%s", exc)

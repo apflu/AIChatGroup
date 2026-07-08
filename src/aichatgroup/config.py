@@ -152,6 +152,10 @@ class Settings:
     # 持久化与预设
     sqlite_path: str = "aichatgroup.sqlite"
     preset_path: str | None = None
+    # ---- 日志（loguru）----
+    log_level: str = "INFO"          # 控制台级别
+    tg_log_enabled: bool = False     # 是否把事件流按级别转发到 Telegram 群（开发期观测）
+    tg_log_level: str = "DEBUG"      # 转发阈值（DEBUG 含 storyteller/conductor/usher-escalate，不含 absorb=TRACE）
 
     @classmethod
     def from_env(cls, dotenv_path: str | os.PathLike[str] | None = None) -> "Settings":
@@ -167,6 +171,10 @@ class Settings:
         def _i(name: str, default: int) -> int:
             raw = os.environ.get(name)
             return int(raw) if raw else default
+
+        def _b(name: str, default: bool) -> bool:
+            raw = os.environ.get(name)
+            return raw.strip().lower() in ("1", "true", "yes", "on") if raw else default
 
         # provider 定义：声明式 JSON 文件 + 摊平的 env 变量，二者合并（同别名后者覆盖）
         providers = _parse_providers()
@@ -197,5 +205,8 @@ class Settings:
             keep_last=_i("AICG_KEEP_LAST", 20),
             sqlite_path=os.environ.get("AICG_SQLITE_PATH", "aichatgroup.sqlite"),
             preset_path=os.environ.get("AICG_PRESET_PATH"),
+            log_level=os.environ.get("AICG_LOG_LEVEL", "INFO"),
+            tg_log_enabled=_b("AICG_TG_LOG_ENABLED", False),
+            tg_log_level=os.environ.get("AICG_TG_LOG_LEVEL", "DEBUG"),
             providers=providers,
         )

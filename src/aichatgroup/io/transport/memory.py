@@ -20,6 +20,8 @@ class InMemoryTransport:
         self.sent_records: list[dict] = []
         # typing 提示记录：agent_id
         self.typing_calls: list[str] = []
+        # 系统/旁白消息记录（send_system），供断言开发日志转发
+        self.system_sent: list[str] = []
         self.started = False
         self.stopped = False
 
@@ -49,3 +51,6 @@ class InMemoryTransport:
             "reply_to": reply_to_external_id, "external_id": ext,
         })
         return ext
+
+    async def send_system(self, text: str) -> None:
+        self.system_sent.append(text)

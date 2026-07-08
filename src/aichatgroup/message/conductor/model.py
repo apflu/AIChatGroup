@@ -12,6 +12,7 @@ import logging
 
 from ...domain.types import Agent, RoomState
 from ...io.gateway import ModelGateway
+from ...observability import log_model_raw
 from ...prompts import load as load_prompt, render as render_prompt
 from .base import consecutive_count, last_speaker_name
 
@@ -64,6 +65,7 @@ class ModelConductor:
                 model_id=self.model_id,
                 max_tokens=16,
             )
+            log_model_raw("conductor", resp.text)
             choice = resp.text.strip().lower()
         except Exception as exc:  # 模型/网络异常 → 规则兜底
             logger.warning("conductor 模型调用失败，回退规则：%s", exc)

@@ -118,3 +118,13 @@ class TelegramTransport:
         except Exception as exc:  # pragma: no cover
             logger.warning("send_text(%s) 失败：%s", agent.name, exc)
             return None
+
+    async def send_system(self, text: str) -> None:
+        """用 observer bot（bot 0）往群里发一条系统/旁白消息（开发日志转发用）。
+
+        observer bot 收不到自己发的消息 → 不会回灌摄入队列，天然无环。
+        """
+        try:
+            await self._observer_app.bot.send_message(chat_id=self.chat_id, text=text)
+        except Exception as exc:  # pragma: no cover - 网络失败不回环成 event
+            logger.warning("send_system 失败：%s", exc)

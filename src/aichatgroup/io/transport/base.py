@@ -62,3 +62,11 @@ class Transport(Protocol):
         返回发出消息的 external_id（供后续消息回复它）；发送失败或无从获取时返回 None。
         """
         ...
+
+    async def send_system(self, text: str) -> None:
+        """以「系统/旁白」身份往群里发一条非角色消息（可为 no-op）。
+
+        用途：开发期把结构化事件（storyteller 播种 / conductor fire / usher 升级…）
+        转发到群里看（见 runtime/log_relay.py）。Telegram 里由 observer bot（bot 0）代发。
+        """
+        ...

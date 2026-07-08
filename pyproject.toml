@@ -9,6 +9,7 @@ description = "多模型 AI 群聊引擎 —— transport-agnostic core engine"
 requires-python = ">=3.10"
 dependencies = [
     "anthropic>=0.40",
+    "loguru>=0.7.3",
 ]
 
 [project.optional-dependencies]

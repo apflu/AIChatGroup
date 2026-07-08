@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from ...domain.types import RoomState, WorldBook
 from ...io.gateway import ModelGateway
+from ...observability import log_model_raw
 from ...prompts import load as load_prompt, render as render_prompt
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,7 @@ def maybe_compact(
         model_id=model_id,
         max_tokens=max_tokens,
     )
+    log_model_raw("compaction", resp.text)
     new_summary = resp.text.strip()
 
     dropped = len(old)

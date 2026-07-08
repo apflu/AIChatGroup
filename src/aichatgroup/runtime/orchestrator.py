@@ -40,7 +40,7 @@ from ..message.generator.parsing import parse_turn_output
 from ..message.generator.turn import merge_memory
 from ..message.prompt import build_prompt
 from ..message.usher import Usher
-from ..observability import log_event
+from ..observability import log_event, log_model_raw
 from ..story.memory.compaction import maybe_compact
 from ..story.storyteller import Storyteller, StubStoryteller
 from .switch import MasterSwitch
@@ -331,6 +331,8 @@ class Orchestrator:
             self.gateway.complete, system, messages, agent.model_id, self.max_tokens
         )
         # 3) 解析 + 节奏（循环线程内）
+        # 原始模型输出先落 FIREHOSE（解析前），便于诊断"回复未命中 filter"/prompt 效果
+        log_model_raw("generator", resp.text, agent=agent.name)
         parsed, memory_delta = parse_turn_output(resp.text, speaker=agent.name)
         pauses = resolve_pauses(
             [pb.display for pb in parsed], [pb.pause_hint for pb in parsed], agent.pacing
@@ -340,9 +342,10 @@ class Orchestrator:
             agent.name, len(parsed),
             resp.usage.cache_read_input_tokens, resp.usage.cache_creation_input_tokens,
         )
+        # model_call 只留 output + cache 计数（不记 input tokens），TRACE 级保持可读、够诊断 cache
         log_event(
             "model_call", agent=agent.name, model=agent.model_id, bubbles=len(parsed),
-            input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
+            output_tokens=resp.usage.output_tokens,
             cache_read=resp.usage.cache_read_input_tokens,
             cache_creation=resp.usage.cache_creation_input_tokens,
         )

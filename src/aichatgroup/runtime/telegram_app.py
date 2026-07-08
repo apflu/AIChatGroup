@@ -15,6 +15,7 @@ from ..io.persistence import Store
 from ..presets import load_preset
 from ..story.storyteller import ModelStoryteller
 from ..io.transport import TelegramTransport
+from .log_relay import TelegramLogRelay
 from .orchestrator import Orchestrator
 
 logger = logging.getLogger(__name__)
@@ -70,12 +71,21 @@ def build_orchestrator(
 
 def serve(preset_path: str, turns: int | None = None, settings: Settings | None = None) -> int:
     """同步入口：装配并跑主循环，返回完成的发言回合数。"""
+    settings = settings or Settings.from_env()
     orch, store, _ = build_orchestrator(preset_path, settings)
 
     async def _run() -> int:
+        relay = None
+        if settings.tg_log_enabled:
+            # 开发期把事件流按级别转发到群（observer bot 代发）；需在运行中的 loop 里挂
+            relay = TelegramLogRelay(orch.transport)
+            await relay.attach(level=settings.tg_log_level)
+            logger.info("Telegram 日志转发已开：级别≥%s 的事件将播到群里", settings.tg_log_level)
         try:
             return await orch.run(max_turns=turns)
         finally:
+            if relay is not None:
+                await relay.detach()
             store.close()
 
     return asyncio.run(_run())

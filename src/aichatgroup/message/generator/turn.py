@@ -10,6 +10,7 @@ import logging
 
 from ...domain.types import Agent, RoomState, TurnResult, WorldBook
 from ...io.gateway import ModelGateway
+from ...observability import log_model_raw
 from ..prompt import build_prompt
 from ..delivery.pacing import resolve_pauses
 from .parsing import parse_turn_output
@@ -50,6 +51,7 @@ def run_turn(
     """
     system, messages = build_prompt(world, room, agent, conductor_instruction)
     resp = gateway.complete(system, messages, agent.model_id, max_tokens=max_tokens)
+    log_model_raw("generator", resp.text, agent=agent.name)
     parsed, memory_delta = parse_turn_output(resp.text, speaker=agent.name)
     pauses = resolve_pauses(
         [pb.display for pb in parsed], [pb.pause_hint for pb in parsed], agent.pacing

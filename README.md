@@ -61,8 +61,9 @@ uv run --with anthropic --with python-telegram-bot \
 | `io/persistence/` | `store.py`：SQLite 会话状态（历史去重 / 记忆快照 / 摘要） |
 | `runtime/` | 编排层：`orchestrator.py`（异步 tick 主循环）、`switch.py`（开关键）、`telegram_app.py`（装配） |
 | `presets.py` | 房间预设加载（手写世界书 + 角色卡，见 `examples/room.example.json`） |
-| `observability.py` | 结构化事件流：`log_event(kind, **fields)`（ingest/schedule/model_call/compaction/error） |
-| `config.py` / `logging_setup.py` | 跨层基础设施：配置与日志 |
+| `observability.py` | 结构化事件流（loguru 之上）：`log_event(kind, **fields)` 按事件类型选级别（`usher_escalate`/`conversation_seed`/`schedule`=DEBUG、`usher_absorb`/`model_call`=TRACE、原始输出 `model_raw`=FIREHOSE），渲染成一行 `kind key=value`（英文键、内容原样、无符号）；字段 bind 进 `extra` 供将来观测面板 fold。`log_model_raw(source, raw)` 在**每个模型输出点**（generator/usher/storyteller/conductor/compaction）记原始输出，`FIREHOSE`（TRACE 之下一级）承载，使 TRACE 保持可读 |
+| `runtime/log_relay.py` | 开发期把事件流按级别转发到 Telegram 群（`observer` bot 代发）；sync loguru sink → asyncio 队列 → `transport.send_system`，只转带 `event` 的记录、按阈值过滤 |
+| `config.py` / `logging_setup.py` | 跨层基础设施：配置与日志（loguru 骨架 + `InterceptHandler` 接管 stdlib logging，既有 `getLogger().info()` 照旧可用） |
 
 常用符号在顶层再导出：`from aichatgroup import Agent, Orchestrator, ModelConductor, Storyteller, Store, load_preset`。
 

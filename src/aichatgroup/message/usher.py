@@ -19,6 +19,7 @@ from dataclasses import dataclass
 
 from ..domain.types import RoomState
 from ..io.gateway import ModelGateway
+from ..observability import log_model_raw
 from ..prompts import load as load_prompt, render as render_prompt
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,7 @@ class Usher:
                 model_id=self.model_id,
                 max_tokens=8,
             )
+            log_model_raw("usher", resp.text, speaker=speaker)
             choice = resp.text.strip().lower()
         except Exception as exc:  # 网络/模型异常 → 保守 absorb（误判只赔延迟）
             logger.warning("usher 模型调用失败，保守 absorb：%s", exc)

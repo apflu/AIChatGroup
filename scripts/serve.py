@@ -19,6 +19,7 @@ python-telegram-bot。前置准备（bot、privacy、chat_id、.env）见 script
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -42,7 +43,7 @@ def main() -> int:
         except Exception:
             pass
 
-    setup_logging()
+    setup_logging(os.environ.get("AICG_LOG_LEVEL", "INFO"))
     print("=" * 60)
     print(f"不夜港 · 群聊运行中（preset={args.preset}，Ctrl-C 停）")
     print("=" * 60)
