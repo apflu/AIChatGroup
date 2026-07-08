@@ -40,6 +40,7 @@ aichatgroup/
 ├── domain/                # 【共享内核】谁都依赖它，它不依赖任何人
 │   ├── types.py           #   Message / ContentPart / RoomState / Agent / WorldBook / TurnResult
 │   ├── markers.py         #   标记词表（模型 ↔ Delivery 的契约）
+│   ├── conversation.py    #   ✅ ConversationIntent / ConversationEnd + reason/kind 词表（storyteller⇄conductor 契约）
 │   ├── ordering.py        #   ★NEW 偏序/DAG：BubbleGraph、depends_on、topological_sort
 │   └── beat.py            #   ★NEW BeatPlan / SpeakIntent（编排的数据结构，非逻辑）
 │
@@ -49,8 +50,8 @@ aichatgroup/
 │                          #   机器契约（marker 值/DIRECTIONS/none/MockGateway 正则）仍是代码常量，留解析器身边，靠 test 防漂移。
 │
 ├── message/               # 【前台平面】消息流（纯文本，不碰 tool）
-│   ├── conductor/         #   谁说话 + 编排 beat（原 director/）
-│   │   ├── base.py  rule.py  model.py
+│   ├── conductor/         #   ✅ 谁说话（Conductor，原 Director）+ 会话结束检测
+│   │   ├── base.py  rule.py  model.py  end_detector.py
 │   ├── generator/         #   一个 turn：组装→调用→解析→气泡（原 engine/turn + parsing）
 │   │   ├── turn.py  parsing.py
 │   ├── delivery/          #   ★演出：队列、交错、微观时序、抢占（原 pacing + orchestrator 的发送段）
@@ -59,7 +60,9 @@ aichatgroup/
 │       └── builder.py
 │
 ├── story/                 # 【后台平面】暗线（各自私有上下文，只注入前台尾部）
-│   ├── storyteller/       #   ★TODO 编导/压力源：产出 StoryFramework / BeatBrief
+│   ├── storyteller/       #   ✅ 会话级编导/压力源：会话边界播种 ConversationIntent
+│   │   ├── base.py        #     Storyteller 协议 + StubStoryteller（零模型骨架）
+│   │   └── model.py       #     ModelStoryteller（重模型，读 last_end 播种 KIND/HOOK）
 │   ├── memory/            #   记忆 / 压缩（原 engine/compaction）
 │   │   └── compaction.py
 │   └── sim/               #   ★TODO 模拟经营数值系统
@@ -151,7 +154,7 @@ class BubbleGraph:
 | 偏序气泡队列(先全序,结构支持交错) | message/delivery/queue.py | 现在留位 |
 | 用户打断:判断器 + 抢占 | message/delivery/interrupt.py + conductor | 用户路径**必做**,可紧接队列 |
 | AI 剧本化交错/打断 | conductor 作者 edges | 后置(填进已就位的接缝) |
-| storyteller 框架 → prompt | story/storyteller + message/prompt | 后置(开 M2 时连着设计) |
+| ✅ storyteller 会话边界播种意图 → conductor_instruction 尾部注入 | story/storyteller + message/prompt | M2 已落地 |
 | 高级 marker 词表 | domain/markers | 随 delivery 一起长 |
 
 第一原则不变:核心引擎 **transport-agnostic**;硬规则:永远不让一个模型生成不归它管的角色内容。
