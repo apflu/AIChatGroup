@@ -13,6 +13,7 @@
 """
 from .config import ProviderSpec, Settings, load_provider_specs
 from .message.conductor import Director, ModelDirector, RoundRobinDirector
+from .message.usher import Usher, UsherDecision
 from .domain import (
     Agent,
     ChatMessage,
@@ -72,10 +73,12 @@ __all__ = [
     "merge_memory",
     "maybe_compact",
     "CompactionResult",
-    # director
+    # conductor（原 director）+ usher
     "Director",
     "ModelDirector",
     "RoundRobinDirector",
+    "Usher",
+    "UsherDecision",
     # transport
     "Transport",
     "InboundMessage",
