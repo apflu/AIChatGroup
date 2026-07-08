@@ -2,6 +2,8 @@ spec_raw/
 preset/
 /providers.json
 
+.claude/settings.json
+
 __pycache__/
 *.py[cod]
 .venv/
