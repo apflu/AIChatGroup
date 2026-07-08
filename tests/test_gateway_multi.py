@@ -48,10 +48,11 @@ def test_join_user_text():
 
 # ---- 模型 spec 解析 ----------------------------------------------------
 @pytest.mark.parametrize("spec,alias,model", [
-    ("anthropic#claude-opus-4-8", "anthropic", "claude-opus-4-8"),
-    ("openai#gpt-4o", "openai", "gpt-4o"),
-    ("  Gemini # gemini-2.0-flash ", "gemini", "gemini-2.0-flash"),
+    ("anthropic::claude-opus-4-8", "anthropic", "claude-opus-4-8"),
+    ("openai::gpt-4o", "openai", "gpt-4o"),
+    ("  Gemini :: gemini-2.0-flash ", "gemini", "gemini-2.0-flash"),
     ("claude-opus-4-8", None, "claude-opus-4-8"),   # 裸名 → 无别名
+    ("anthropic#claude-opus-4-8", "anthropic", "claude-opus-4-8"),  # 旧 `#` 分隔符仍兼容
 ])
 def test_parse_model_spec(spec, alias, model):
     assert parse_model_spec(spec) == (alias, model)
@@ -78,10 +79,10 @@ def _router():
 
 @pytest.mark.parametrize("spec,expected", [
     # 显式别名
-    ("anthropic#claude-opus-4-8", "anthropic"),
-    ("openai#gpt-4o", "openai"),
-    ("gemini#gemini-2.0-flash", "gemini"),
-    ("openai#claude-opus-4-8", "openai"),   # 别名压倒模型名：名叫 claude 也走 openai
+    ("anthropic::claude-opus-4-8", "anthropic"),
+    ("openai::gpt-4o", "openai"),
+    ("gemini::gemini-2.0-flash", "gemini"),
+    ("openai::claude-opus-4-8", "openai"),   # 别名压倒模型名：名叫 claude 也走 openai
     # 裸名 → 前缀推断（向后兼容）
     ("claude-opus-4-8", "anthropic"),
     ("gpt-4o", "openai"),
@@ -98,18 +99,18 @@ def test_router_strips_alias_before_delegating():
     r = RouterGateway()
     r.register("anthropic", _Tag("anthropic"), ANTHROPIC_PREFIXES, default=True)
     r.register("openai", tag, OPENAI_PREFIXES)
-    r.complete(SYSTEM, MESSAGES, "openai#gpt-4o")
+    r.complete(SYSTEM, MESSAGES, "openai::gpt-4o")
     # 下游只应收到真实模型名，别名已剥掉
     assert tag.seen_model == "gpt-4o"
 
 
 def test_router_complete_delegates():
-    assert _router().complete(SYSTEM, MESSAGES, "openai#gpt-4o").text == "openai"
+    assert _router().complete(SYSTEM, MESSAGES, "openai::gpt-4o").text == "openai"
 
 
 def test_router_unknown_alias_raises():
     with pytest.raises(KeyError):
-        _router().route("nope#some-model")
+        _router().route("nope::some-model")
 
 
 def test_router_no_default_raises():
@@ -121,7 +122,7 @@ def test_router_alias_only_provider():
     # 额外命名别名不带前缀，只能通过 alias#model 寻址
     r = RouterGateway()
     r.register("deepseek", _Tag("deepseek"))
-    assert r.route("deepseek#deepseek-chat").name == "deepseek"
+    assert r.route("deepseek::deepseek-chat").name == "deepseek"
 
 
 # ---- OpenAI 适配 -------------------------------------------------------
@@ -214,7 +215,7 @@ def test_build_gateway_wires_anthropic_and_defaults():
     s = _Settings()
     s.anthropic_api_key = "k"  # anthropic 包在测试环境可用
     router = build_gateway(s)
-    assert router.route("anthropic#claude-opus-4-8") is not None
+    assert router.route("anthropic::claude-opus-4-8") is not None
     assert router.route("claude-opus-4-8") is not None   # 裸名前缀推断
     assert router.route("unknown") is not None           # default 落到 anthropic
 
@@ -225,7 +226,7 @@ def test_build_gateway_registers_extra_named_provider():
     s.providers = [ProviderSpec(alias="claude2", kind="anthropic", api_key="k")]
     router = build_gateway(s)
     assert "claude2" in router.aliases
-    assert router.route("claude2#claude-opus-4-8") is not None
+    assert router.route("claude2::claude-opus-4-8") is not None
 
 
 def test_build_gateway_no_keys_raises():

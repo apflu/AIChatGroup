@@ -1,14 +1,15 @@
-"""RouterGateway —— 按 `provider_alias#model` 把一次调用分发给对应 provider 的网关。
+"""RouterGateway —— 按 `provider_alias::model` 把一次调用分发给对应 provider 的网关。
 
-模型选择的规范形式是 **`别名#模型名`**，例如：
-    anthropic#claude-opus-4-8
-    openai#gpt-4o
-    gemini#gemini-2.0-flash
-    deepseek#deepseek-chat        # deepseek 是自定义的兼容端点别名
-路由只看 `#` 前的别名，与模型名彻底解耦——同一个模型名可以挂在不同端点上，
+模型选择的规范形式是 **`别名::模型名`**，例如：
+    anthropic::claude-opus-4-8
+    openai::gpt-4o
+    gemini::gemini-2.0-flash
+    deepseek::deepseek-chat        # deepseek 是自定义的兼容端点别名
+路由只看分隔符前的别名，与模型名彻底解耦——同一个模型名可以挂在不同端点上，
 换 provider 只改别名、不动模型名。别名到具体网关的映射是可配置的（见 factory / config）。
 
-向后兼容：不带 `#` 的裸模型名（如 `claude-opus-4-8`）仍按前缀推断路由，老预设不破。
+分隔符：规范用 `::`；旧的 `#` 仍被接受（弃用——它和 .env 行内注释 `#` 相撞、需转义）。
+向后兼容：不带分隔符的裸模型名（如 `claude-opus-4-8`）仍按前缀推断路由，老预设不破。
 
 **懒实例化**：网关可以用 register_lazy 登记一个工厂，真正路由到它时才构造（才触发对应
 SDK 的延迟导入）。于是「环境里有某家的 key、但没装它的 SDK、也从没路由到它」不会拖垮整体。
@@ -32,11 +33,19 @@ OPENAI_PREFIXES = ("gpt-", "o1", "o3", "o4", "chatgpt", "openai/")
 GEMINI_PREFIXES = ("gemini-", "models/gemini", "google/")
 
 
+SPEC_SEP = "::"          # 规范分隔符
+_LEGACY_SEP = "#"        # 旧分隔符，仍解析（向后兼容），但会和行内注释 `#` 撞，已弃用
+
+
 def parse_model_spec(spec: str) -> tuple[str | None, str]:
-    """`别名#模型` → (别名, 模型)；无 `#` 时别名为 None，返回裸模型名。"""
-    alias, sep, model = spec.partition("#")
-    if sep:
-        return (alias.strip().lower() or None), model.strip()
+    """`别名::模型` → (别名, 模型)；无分隔符时别名为 None，返回裸模型名。
+
+    规范分隔符是 `::`；旧的 `#` 仍被接受（弃用），因为它和 .env 行内注释的 `#` 相撞、需转义。
+    """
+    for sep in (SPEC_SEP, _LEGACY_SEP):
+        alias, found, model = spec.partition(sep)
+        if found:
+            return (alias.strip().lower() or None), model.strip()
     return None, spec.strip()
 
 

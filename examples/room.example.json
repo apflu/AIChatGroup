@@ -12,7 +12,7 @@
     {
       "id": "a1",
       "name": "小丸子",
-      "model_id": "clwd#claude-sonnet-5",
+      "model_id": "clwd::claude-sonnet-5",
       "base_prompt": "你是酒馆常客。",
       "character_card": "活泼、话痨、爱起哄。",
       "pacing": { "base_pause_s": 0.2, "per_char_s": 0.03, "explicit_scale": 0.6 },
@@ -21,7 +21,7 @@
     {
       "id": "a2",
       "name": "阿福",
-      "model_id": "clwd#claude-opus-4-6",
+      "model_id": "clwd::claude-opus-4-6",
       "base_prompt": "你是退役水手。",
       "character_card": "沉稳、爱讲道理、偶尔毒舌。",
       "pacing": { "base_pause_s": 0.8, "per_char_s": 0.09, "explicit_scale": 1.5 },
@@ -30,7 +30,7 @@
     {
       "id": "a3",
       "name": "小诗",
-      "model_id": "clwd#claude-sonnet-5",
+      "model_id": "clwd::claude-sonnet-5",
       "base_prompt": "你是吟游诗人。",
       "character_card": "浪漫、爱接话、总想押韵。",
       "bot_token_env": "TG_TOKEN_CHAR_3"

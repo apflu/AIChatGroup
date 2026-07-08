@@ -4,7 +4,7 @@
 - anthropic ← ANTHROPIC_API_KEY   （default，本项目缓存设计特化于它）
 - openai    ← OPENAI_API_KEY / OPENAI_BASE_URL
 - gemini    ← GEMINI_API_KEY / GOOGLE_API_KEY
-额外命名别名来自 settings.providers（AICG_PROVIDERS / providers.json，见 config），用 `别名#模型` 引用。
+额外命名别名来自 settings.providers（AICG_PROVIDERS / providers.json，见 config），用 `别名::模型` 引用。
 
 **懒实例化**：这里只登记「用到才构造」的工厂，所以某家的 key 在环境里、但没装它的 SDK、
 又从没路由到它时，不会在装配阶段就崩——只有真正拿它发消息时才会因缺包报错。
@@ -12,7 +12,7 @@
 用法：
     from aichatgroup.config import Settings
     from aichatgroup.io.gateway import build_gateway
-    gateway = build_gateway(Settings.from_env())   # 模型形如 anthropic#claude-opus-4-8
+    gateway = build_gateway(Settings.from_env())   # 模型形如 anthropic::claude-opus-4-8
 """
 from __future__ import annotations
 

@@ -37,7 +37,7 @@ class ProviderSpec:
     def from_dict(cls, d: dict) -> "ProviderSpec":
         """从声明式配置构造。字段：
 
-            alias        必填，provider 别名（用 别名#模型 引用）
+            alias        必填，provider 别名（用 别名::模型 引用）
             type / kind  openai | anthropic | gemini（默认 openai）
             provider_url / base_url / url   端点地址（openai 兼容端点必填）
             api_key      直接写密钥（不推荐，会进配置文件）
@@ -95,8 +95,8 @@ def _parse_providers() -> list[ProviderSpec]:
 def _strip_inline_comment(value: str) -> str:
     """剥掉行内注释：`#` 前有空白才算注释起点。
 
-    值本身可能含 `#`（如 provider_alias#model），那种 `#` 前无空白，不会被误伤。
-    整段带引号的值（"..." / '...'）则原样保留、不剥注释。
+    值本身若含无前导空白的 `#`（如旧式 provider_alias#model）不会被误伤；模型 spec 规范分隔符
+    已改成 `::`（见 gateway/router.py），正是为免去这里的 `#` 纠缠。带引号的值原样保留、不剥注释。
     """
     v = value.strip()
     if v[:1] in ("'", '"'):
