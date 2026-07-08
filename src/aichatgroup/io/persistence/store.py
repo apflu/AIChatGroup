@@ -26,7 +26,20 @@ CREATE TABLE IF NOT EXISTS messages (
     speaker     TEXT NOT NULL,
     text        TEXT NOT NULL,
     reply_to_id INTEGER,
+    conversation_id INTEGER,
     ts          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+-- 会话（M2）：storyteller 播种的一段对话；消息挂 conversation_id。
+CREATE TABLE IF NOT EXISTS conversations (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    room_id    INTEGER NOT NULL,
+    kind       TEXT NOT NULL DEFAULT '',
+    hook       TEXT NOT NULL DEFAULT '',
+    end_reason TEXT,
+    tension    REAL NOT NULL DEFAULT 0.0,
+    summary    TEXT NOT NULL DEFAULT '',
+    created_ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ended_ts   TIMESTAMP
 );
 -- 仅对「有 external_id」的消息去重；引擎自产的气泡 external_id 为 NULL，不受此约束。
 CREATE UNIQUE INDEX IF NOT EXISTS ux_messages_external
@@ -60,6 +73,8 @@ class Store:
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(messages)")}
         if "reply_to_id" not in cols:
             self.conn.execute("ALTER TABLE messages ADD COLUMN reply_to_id INTEGER")
+        if "conversation_id" not in cols:
+            self.conn.execute("ALTER TABLE messages ADD COLUMN conversation_id INTEGER")
 
     def close(self) -> None:
         self.conn.close()
@@ -82,11 +97,12 @@ class Store:
         text: str,
         external_id: str | None = None,
         reply_to_id: int | None = None,
+        conversation_id: int | None = None,
     ) -> int | None:
         """追加一条共享历史，返回新行的 id（房间内稳定 handle）。
 
         有 external_id 且重复时返回 None（不插入）——调用方据此判断是否为去重命中。
-        reply_to_id 指向被回复消息的内部 id。
+        reply_to_id 指向被回复消息的内部 id；conversation_id 挂到所属会话（M2）。
         """
         if external_id is not None:
             exists = self.conn.execute(
@@ -96,9 +112,9 @@ class Store:
             if exists is not None:
                 return None
         cur = self.conn.execute(
-            "INSERT INTO messages(room_id, external_id, speaker, text, reply_to_id) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (room_id, external_id, speaker, text, reply_to_id),
+            "INSERT INTO messages(room_id, external_id, speaker, text, reply_to_id, conversation_id) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (room_id, external_id, speaker, text, reply_to_id, conversation_id),
         )
         self.conn.commit()
         return int(cur.lastrowid)
@@ -159,6 +175,50 @@ class Store:
         )
         self.conn.commit()
         return cur.rowcount
+
+    # ---- conversations (M2) -------------------------------------------
+    def start_conversation(self, room_id: int, kind: str = "", hook: str = "") -> int:
+        """开一段会话，返回其 id（storyteller 播种意图后、首个气泡落库时调）。"""
+        cur = self.conn.execute(
+            "INSERT INTO conversations(room_id, kind, hook) VALUES (?, ?, ?)",
+            (room_id, kind, hook),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def end_conversation(
+        self, conversation_id: int, reason: str, tension: float = 0.0, summary: str = ""
+    ) -> None:
+        """收束一段会话，记 reason/tension/summary + 结束时间。"""
+        self.conn.execute(
+            "UPDATE conversations SET end_reason = ?, tension = ?, summary = ?, "
+            "ended_ts = CURRENT_TIMESTAMP WHERE id = ?",
+            (reason, tension, summary, conversation_id),
+        )
+        self.conn.commit()
+
+    def get_conversation(self, conversation_id: int) -> dict | None:
+        r = self.conn.execute(
+            "SELECT id, room_id, kind, hook, end_reason, tension, summary "
+            "FROM conversations WHERE id = ?",
+            (conversation_id,),
+        ).fetchone()
+        return dict(r) if r is not None else None
+
+    def recent_conversations(self, room_id: int, limit: int = 5) -> list[dict]:
+        """最近 limit 段会话（最新在前），供 storyteller 记忆播种连贯的下一段。"""
+        rows = self.conn.execute(
+            "SELECT id, room_id, kind, hook, end_reason, tension, summary "
+            "FROM conversations WHERE room_id = ? ORDER BY id DESC LIMIT ?",
+            (room_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_conversations(self, room_id: int) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS n FROM conversations WHERE room_id = ?", (room_id,)
+        ).fetchone()
+        return int(row["n"])
 
     # ---- memory --------------------------------------------------------
     def save_memory(self, room_id: int, agent_id: str, content: str) -> None:
