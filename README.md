@@ -42,16 +42,21 @@ uv run --with anthropic --with python-telegram-bot \
 
 ## 代码结构（`src/aichatgroup/`）
 
+> **按用途分包**（package-by-purpose），依赖方向无环、`message` 与 `story` 互不直接 import。
+> 布局与依据见 [docs/architecture.md](docs/architecture.md)，消息排序/偏序/拓扑见 [docs/message-ordering.md](docs/message-ordering.md)。
+
 | 子包 / 模块 | 职责 |
 | --- | --- |
-| `domain/` | 领域层：`types.py`（`Message`/`ContentPart`/`WorldBook`/`Agent`/`RoomState` ...）+ `markers.py`（控制标记词表） |
-| `gateway/` | Model Gateway：`base.py`（协议+辅助）、`anthropic_gateway.py`、`openai_gateway.py`（含兼容端点）、`gemini_gateway.py`、`router.py`（按 model_id 分发）、`factory.py`（按 key 装配）、`mock.py`（模拟前缀缓存） |
-| `prompt/` | `builder.py`：分层 Prompt 组装 + 显式 `cache_control` 断点 |
-| `engine/` | 运行层：`parsing.py`（多气泡+记忆增量）、`pacing.py`（气泡节奏）、`turn.py`（发言回合）、`compaction.py`（历史压缩） |
-| `director/` | 调度层：`rule.py`（RoundRobin，离线）、`model.py`（`ModelDirector`，Haiku 决定谁说话） |
-| `transport/` | 收发边界：`base.py`（`Transport` 协议）、`memory.py`（测试）、`telegram.py`（M1 落地，懒加载 ptb） |
-| `persistence/` | `store.py`：SQLite 会话状态（历史去重 / 记忆快照 / 摘要） |
-| `runtime/` | 编排层：`orchestrator.py`（异步 tick 主循环）、`switch.py`（开关键） |
+| `domain/` | 共享内核：`types.py`（`Message`/`ContentPart`/`WorldBook`/`Agent`/`RoomState` ...）+ `markers.py`（控制标记词表） |
+| `message/conductor/` | 编导（原 director）：`rule.py`（RoundRobin，离线）、`model.py`（`ModelDirector`，Haiku 决定谁说话） |
+| `message/generator/` | 生成回合：`turn.py`（发言回合）、`parsing.py`（多气泡+记忆增量） |
+| `message/delivery/` | 演出：`pacing.py`（气泡节奏）；后续加交错队列 + 抢占 |
+| `message/prompt/` | `builder.py`：分层 Prompt 组装 + 显式 `cache_control` 断点 |
+| `story/memory/` | `compaction.py`：历史压缩（暗线平面唯一已落地块；storyteller / sim 待建） |
+| `io/gateway/` | Model Gateway：`base.py`、`anthropic_gateway.py`、`openai_gateway.py`（含兼容端点）、`gemini_gateway.py`、`router.py`（按 model_id 分发）、`factory.py`（按 key 装配）、`mock.py` |
+| `io/transport/` | 收发边界：`base.py`（`Transport` 协议）、`memory.py`（测试）、`telegram.py`（M1 落地，懒加载 ptb） |
+| `io/persistence/` | `store.py`：SQLite 会话状态（历史去重 / 记忆快照 / 摘要） |
+| `runtime/` | 编排层：`orchestrator.py`（异步 tick 主循环）、`switch.py`（开关键）、`telegram_app.py`（装配） |
 | `presets.py` | 房间预设加载（手写世界书 + 角色卡，见 `examples/room.example.json`） |
 | `observability.py` | 结构化事件流：`log_event(kind, **fields)`（ingest/schedule/model_call/compaction/error） |
 | `config.py` / `logging_setup.py` | 跨层基础设施：配置与日志 |

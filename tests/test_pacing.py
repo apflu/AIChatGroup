@@ -1,5 +1,5 @@
 from aichatgroup.domain import PacingConfig
-from aichatgroup.engine import infer_pause, resolve_pauses
+from aichatgroup.message.delivery import infer_pause, resolve_pauses
 
 
 def test_first_pause_always_zero():

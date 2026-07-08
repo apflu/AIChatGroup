@@ -1,12 +1,12 @@
 """Orchestrator：全循环发言/发送/持久化、摄入去重、开关命令。"""
 import asyncio
 
-from aichatgroup.director import RoundRobinDirector
+from aichatgroup.message.conductor import RoundRobinDirector
 from aichatgroup.domain import Agent, WorldBook
-from aichatgroup.gateway import MockGateway
-from aichatgroup.persistence import Store
+from aichatgroup.io.gateway import MockGateway
+from aichatgroup.io.persistence import Store
 from aichatgroup.runtime import Orchestrator
-from aichatgroup.transport import InboundMessage, InMemoryTransport
+from aichatgroup.io.transport import InboundMessage, InMemoryTransport
 
 
 async def _fast_sleep(_seconds: float) -> None:

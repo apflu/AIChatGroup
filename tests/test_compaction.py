@@ -1,7 +1,7 @@
 """基础 compaction：超阈值时摘要化最老段、沉入第 1 层、裁剪历史。"""
 from aichatgroup.domain import RoomState, WorldBook
 from aichatgroup.domain.types import GatewayResponse, Usage
-from aichatgroup.engine import maybe_compact
+from aichatgroup.story.memory import maybe_compact
 
 
 class FakeGateway:

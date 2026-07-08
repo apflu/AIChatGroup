@@ -1,7 +1,7 @@
 """Director：RoundRobin 公平轮流 + ModelDirector 选择/兜底/留白。"""
 from aichatgroup.domain import Agent, RoomState
 from aichatgroup.domain.types import GatewayResponse, Usage
-from aichatgroup.director import ModelDirector, RoundRobinDirector, consecutive_count
+from aichatgroup.message.conductor import ModelDirector, RoundRobinDirector, consecutive_count
 
 
 def _agents():

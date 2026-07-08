@@ -18,8 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from aichatgroup.config import Settings
 from aichatgroup.domain import Agent, PacingConfig, RoomState, WorldBook
-from aichatgroup.engine import run_turn
-from aichatgroup.gateway import AnthropicGateway, MockGateway
+from aichatgroup.message.generator import run_turn
+from aichatgroup.io.gateway import AnthropicGateway, MockGateway
 from aichatgroup.logging_setup import setup_logging
 
 

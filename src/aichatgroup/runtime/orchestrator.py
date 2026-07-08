@@ -18,17 +18,17 @@ import contextlib
 import logging
 from typing import Awaitable, Callable
 
-from ..director.base import Director
+from ..message.conductor.base import Director
 from ..domain.types import Agent, RoomState, WorldBook
-from ..engine.compaction import maybe_compact
-from ..engine.parsing import parse_turn_output
-from ..engine.pacing import resolve_pauses
-from ..engine.turn import merge_memory
-from ..gateway import ModelGateway
+from ..story.memory.compaction import maybe_compact
+from ..message.generator.parsing import parse_turn_output
+from ..message.delivery.pacing import resolve_pauses
+from ..message.generator.turn import merge_memory
+from ..io.gateway import ModelGateway
 from ..observability import log_event
-from ..prompt import build_prompt
-from ..persistence.store import Store
-from ..transport.base import InboundMessage, Transport
+from ..message.prompt import build_prompt
+from ..io.persistence.store import Store
+from ..io.transport.base import InboundMessage, Transport
 from .switch import MasterSwitch
 
 logger = logging.getLogger(__name__)

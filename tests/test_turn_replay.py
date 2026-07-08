@@ -1,7 +1,7 @@
 """M0 验收：MockGateway 脚本化 2-Agent 对话，warm 调用命中 cache_read。"""
 from aichatgroup.domain import Agent, RoomState, WorldBook
-from aichatgroup.engine import run_turn
-from aichatgroup.gateway import MockGateway
+from aichatgroup.message.generator import run_turn
+from aichatgroup.io.gateway import MockGateway
 
 
 def _setup():

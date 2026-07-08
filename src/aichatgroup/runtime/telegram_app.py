@@ -8,11 +8,11 @@ import asyncio
 import logging
 
 from ..config import Settings
-from ..director import ModelDirector
-from ..gateway import build_gateway
-from ..persistence import Store
+from ..message.conductor import ModelDirector
+from ..io.gateway import build_gateway
+from ..io.persistence import Store
 from ..presets import load_preset
-from ..transport import TelegramTransport
+from ..io.transport import TelegramTransport
 from .orchestrator import Orchestrator
 
 logger = logging.getLogger(__name__)
