@@ -47,11 +47,20 @@ class ModelStoryteller:
         recent = "\n".join(
             m.render() for m in room.history[-self.recent_window :]
         ) or "（还没有人说话）"
+        # 局势 = 长期摘要 + 客观关系（首段会话时这是 storyteller 唯一的"依据"，
+        # 房间铺底的种子摘要经此进 storyteller 的决策，否则它只能看空历史瞎猜）
+        situation_parts = []
+        if room.long_term_summary.strip():
+            situation_parts.append(room.long_term_summary.strip())
+        if room.objective_relations.strip():
+            situation_parts.append("关系：" + room.objective_relations.strip())
+        situation = "\n".join(situation_parts) or "（暂无既有局势）"
         last_reason = last_end.reason if last_end else "（这是第一段会话）"
         last_summary = (last_end.summary_hook if last_end else "") or "（无）"
         direction = (last_end.direction if last_end else "") or "（无）"
         user = render_prompt(
             "storyteller.user",
+            situation=situation,
             recent=recent,
             last_reason=last_reason,
             last_summary=last_summary,

@@ -57,6 +57,17 @@ def test_model_storyteller_error_falls_back():
     assert intent.hook == ""
 
 
+def test_model_storyteller_feeds_room_situation():
+    # 房间的长期摘要 + 客观关系应进 prompt，供 storyteller 首段决策有依据
+    gw = FakeGateway("KIND: chitchat\nHOOK: 聊聊")
+    st = ModelStoryteller(gw, model_id="opus")
+    room = RoomState(long_term_summary="集市日的傍晚，酒馆更喧闹", objective_relations="小丸子与阿福是老相识")
+    st.seed(room, last_end=None)
+    prompt = gw.calls[0][1][0]["content"]
+    assert "集市日的傍晚" in prompt
+    assert "小丸子与阿福是老相识" in prompt
+
+
 def test_model_storyteller_feeds_last_end_context():
     # user_forced 的 reason/summary/direction 应进 prompt，供定向回应
     gw = FakeGateway("KIND: resolve_tension\nHOOK: 回应用户")

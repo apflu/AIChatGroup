@@ -30,7 +30,7 @@ _EVENT_LEVELS = {
     "conversation_end": "DEBUG",    # conversation closed (with reason)
     "schedule": "DEBUG",            # conductor picked a speaker, about to fire
     "usher_escalate": "DEBUG",      # user input needs the world to respond -> user_forced
-    "usher_absorb": "TRACE",        # user input absorbed (high volume)
+    "usher_absorb": "DEBUG",        # user input absorbed (high volume)
     "ingest": "TRACE",              # ingested an external message
     "model_call": "TRACE",          # per-call output + cache counts (readable, for cache diagnosis)
     "model_raw": FIREHOSE,          # raw model output before parsing (filter-miss / prompt-effect)

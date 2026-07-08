@@ -1,9 +1,7 @@
 """运行配置与默认模型。
 
-模型 ID 以 Anthropic 官方现役别名为准（截至 2026-07）：
-- Opus 4.8 :  claude-opus-4-8
-- Sonnet 5 :  claude-sonnet-5
-- Haiku 4.5:  claude-haiku-4-5
+默认走 `clwd` provider（本项目实际使用的端点），只有 opus / sonnet 两档；无 haiku 档，
+故"便宜档"退到 sonnet。都可被 `AICG_MODEL_*` 环境变量覆盖（写成 `别名::模型`）。
 """
 from __future__ import annotations
 
@@ -13,10 +11,10 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# 各层默认模型别名（可被环境变量覆盖）
-DEFAULT_MODEL_OPUS = "claude-opus-4-8"
-DEFAULT_MODEL_SONNET = "claude-sonnet-5"
-DEFAULT_MODEL_HAIKU = "claude-haiku-4-5"
+# 各层默认模型（可被环境变量覆盖）。clwd 只有 opus/sonnet 两档，故 haiku 档退到 sonnet。
+DEFAULT_MODEL_OPUS = "clwd::claude-opus-4-6"
+DEFAULT_MODEL_SONNET = "clwd::claude-sonnet-5"
+DEFAULT_MODEL_HAIKU = "clwd::claude-sonnet-5"
 
 
 @dataclass

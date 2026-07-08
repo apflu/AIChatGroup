@@ -1,3 +1,6 @@
+# 世界局势
+$situation
+
 # 最近对话
 $recent
 

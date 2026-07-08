@@ -22,6 +22,13 @@ _CONSOLE_FORMAT = (
     "<cyan>{name}</cyan> | <level>{message}</level>"
 )
 
+# 第三方库的 DEBUG 太吵（HTTP 往返、连接池…）——压到 WARNING，别淹没我们自己的事件流。
+# 拦截器 root level=0 会放行一切，故在**各 logger 自身**设级过滤掉它们的 DEBUG/INFO。
+_NOISY = (
+    "httpcore", "httpx", "anthropic", "openai", "google", "google_genai",
+    "telegram", "urllib3", "asyncio",
+)
+
 
 class _InterceptHandler(logging.Handler):
     """把 stdlib logging 的记录转发给 loguru，保住既有 `getLogger().info()` 调用。"""
@@ -51,4 +58,6 @@ def setup_logging(level: str | int = "INFO") -> None:
     logger.add(sys.stderr, level=level, format=_CONSOLE_FORMAT, enqueue=False)
     # stdlib → loguru：根 logger 挂拦截器，level=0 放行全部交给 loguru 决定
     logging.basicConfig(handlers=[_InterceptHandler()], level=0, force=True)
+    for name in _NOISY:  # 第三方库降噪：DEBUG/INFO 在其自身 logger 处就被拦下
+        logging.getLogger(name).setLevel(logging.WARNING)
     _CONFIGURED = True
