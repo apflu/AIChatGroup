@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from aichatgroup.domain.types import GatewayResponse, Usage
-from aichatgroup.gateway import (
+from aichatgroup.io.gateway import (
     ANTHROPIC_PREFIXES,
     GEMINI_PREFIXES,
     OPENAI_PREFIXES,
@@ -14,7 +14,7 @@ from aichatgroup.gateway import (
     build_gateway,
     parse_model_spec,
 )
-from aichatgroup.gateway._translate import (
+from aichatgroup.io.gateway._translate import (
     flatten_messages,
     flatten_system,
     join_user_text,

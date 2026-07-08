@@ -1,5 +1,5 @@
 """SQLite Store：去重、记忆/摘要 upsert、trim、load_room_state。"""
-from aichatgroup.persistence import Store
+from aichatgroup.io.persistence import Store
 
 
 def _store():

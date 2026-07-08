@@ -1,5 +1,5 @@
 from aichatgroup.domain import Agent, RoomState, WorldBook
-from aichatgroup.prompt import build_prompt
+from aichatgroup.message.prompt import build_prompt
 
 
 def _fixture():

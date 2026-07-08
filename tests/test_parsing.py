@@ -3,7 +3,7 @@
 parse_turn_output(text, speaker) -> (bubbles: list[ParsedBubble], memory_delta)。
 断言多用 ParsedBubble 的便利属性：`.text`(仅语言) / `.display`(动作+语言渲染) / `.parts` / `.pause_hint`。
 """
-from aichatgroup.engine import parse_turn_output
+from aichatgroup.message.generator import parse_turn_output
 
 
 def texts(bubbles):

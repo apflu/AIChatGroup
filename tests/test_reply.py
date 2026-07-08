@@ -1,13 +1,13 @@
 """回复寻址端到端：入站解析、出站定向+持久化、builder 句柄与超窗内联重注入。"""
 import asyncio
 
-from aichatgroup.director import RoundRobinDirector
+from aichatgroup.message.conductor import RoundRobinDirector
 from aichatgroup.domain import Agent, RoomState, WorldBook
-from aichatgroup.gateway import MockGateway
-from aichatgroup.persistence import Store
-from aichatgroup.prompt import build_prompt
+from aichatgroup.io.gateway import MockGateway
+from aichatgroup.io.persistence import Store
+from aichatgroup.message.prompt import build_prompt
 from aichatgroup.runtime import Orchestrator
-from aichatgroup.transport import InboundMessage, InMemoryTransport
+from aichatgroup.io.transport import InboundMessage, InMemoryTransport
 
 
 async def _fast(_s):

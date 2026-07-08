@@ -3,13 +3,13 @@ import asyncio
 import json
 import logging
 
-from aichatgroup.director import RoundRobinDirector
+from aichatgroup.message.conductor import RoundRobinDirector
 from aichatgroup.domain import Agent, WorldBook
-from aichatgroup.gateway import MockGateway
+from aichatgroup.io.gateway import MockGateway
 from aichatgroup.observability import log_event
-from aichatgroup.persistence import Store
+from aichatgroup.io.persistence import Store
 from aichatgroup.runtime import Orchestrator
-from aichatgroup.transport import InMemoryTransport
+from aichatgroup.io.transport import InMemoryTransport
 
 
 async def _fast(_s):
