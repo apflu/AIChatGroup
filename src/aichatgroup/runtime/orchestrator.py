@@ -1,15 +1,25 @@
-"""Orchestrator —— transport-agnostic 的 tick 主循环。
+"""Orchestrator —— transport-agnostic 的会话主循环。
 
 把摄入、调度、发言、发送、持久化、开关键、compaction 串成一个异步循环。
-它不认识 Telegram；只依赖 Transport / Director / Store 抽象。
+它不认识 Telegram；只依赖 Transport / Conductor / Storyteller / Store 抽象。
+
+M2：循环从"每拍 conductor 选人"升级为**会话状态机**（三层嵌套时钟，见 docs/milestone/M2.md）：
+
+    storyteller.seed → ConversationIntent ──► 若干 beat（conductor 选人 + EndDetector 观测）
+          ▲                                            │
+          └──── reseed（last_end 带 reason）◄──── conductor 检测到会话收束 ──┘
+
+- **storyteller**（会话级时钟）只在边界工作：seed / reseed。意图的 hook 经 conductor_instruction
+  尾部（不缓存）槽注入 agent，不碰共享历史前缀 → 缓存不变式不破。
+- **conductor**（beat 级时钟）：每拍选人；EndDetector 依 beat 观测判会话该不该结束、报 reason。
+- **usher**：用户输入台口分流。escalate → `user_forced` → 提前收束当前会话，走同一条边界交接路径。
 
 并发模型（要点）：
-- 两个协程共享一份 RoomState：`_ingest_loop`（摄入人类/外部消息）与
-  `_speak_loop`（驱动角色说话）。二者都只在**事件循环线程**里读写 room。
-- 唯一下放到线程池（to_thread）的是**网络调用** `gateway.complete`——它不碰 room，
-  因此不会与摄入协程竞争。prompt 组装、解析、追加历史全部在循环线程内完成，天然安全。
-- director / compaction 的模型调用为简洁起见同步执行（便宜、低频），会短暂占用循环；
-  MVP 可接受，后续可同样拆成「循环内组装 + 线程内调用」。
+- 两个协程共享一份 RoomState：`_ingest_loop`（摄入人类/外部消息 + usher 分流）与
+  `_speak_loop`（驱动会话）。二者都只在**事件循环线程**里读写 room。
+- 唯一下放到线程池（to_thread）的是**发言的网络调用** `gateway.complete`——它不碰 room。
+- conductor / storyteller / usher / compaction 的模型调用为简洁起见同步执行（便宜、低频），
+  会短暂占用循环；MVP 可接受。storyteller 只在会话边界跑（事件驱动，非每拍轮询）。
 """
 from __future__ import annotations
 
@@ -18,17 +28,21 @@ import contextlib
 import logging
 from typing import Awaitable, Callable
 
-from ..message.conductor.base import Director
+from ..domain.conversation import USER_FORCED, ConversationEnd, ConversationIntent
 from ..domain.types import Agent, RoomState, WorldBook
-from ..story.memory.compaction import maybe_compact
-from ..message.generator.parsing import parse_turn_output
-from ..message.delivery.pacing import resolve_pauses
-from ..message.generator.turn import merge_memory
 from ..io.gateway import ModelGateway
-from ..observability import log_event
-from ..message.prompt import build_prompt
 from ..io.persistence.store import Store
 from ..io.transport.base import InboundMessage, Transport
+from ..message.conductor.base import Conductor
+from ..message.conductor.end_detector import EndDetector
+from ..message.delivery.pacing import resolve_pauses
+from ..message.generator.parsing import parse_turn_output
+from ..message.generator.turn import merge_memory
+from ..message.prompt import build_prompt
+from ..message.usher import Usher
+from ..observability import log_event
+from ..story.memory.compaction import maybe_compact
+from ..story.storyteller import Storyteller, StubStoryteller
 from .switch import MasterSwitch
 
 logger = logging.getLogger(__name__)
@@ -42,9 +56,13 @@ class Orchestrator:
         world: WorldBook,
         agents: list[Agent],
         gateway: ModelGateway,
-        director: Director,
-        transport: Transport,
+        conductor: Conductor | None = None,
+        transport: Transport | None = None,
         *,
+        director: Conductor | None = None,   # 迁移期别名：等价 conductor
+        storyteller: Storyteller | None = None,
+        usher: Usher | None = None,
+        end_detector: EndDetector | None = None,
         room: RoomState | None = None,
         store: Store | None = None,
         room_key: str = "default",
@@ -61,8 +79,13 @@ class Orchestrator:
         self.agents = agents
         self._agent_by_id = {a.id: a for a in agents}
         self.gateway = gateway
-        self.director = director
+        self.conductor = conductor if conductor is not None else director
+        if self.conductor is None:
+            raise TypeError("Orchestrator 需要 conductor（或迁移期别名 director）")
         self.transport = transport
+        self.storyteller: Storyteller = storyteller or StubStoryteller()
+        self.usher = usher
+        self.detector = end_detector or EndDetector()
         self.store = store
         self.switch = switch or MasterSwitch()
         self.max_tokens = max_tokens
@@ -80,12 +103,22 @@ class Orchestrator:
         else:
             self.room = room or RoomState()
 
+        # 会话状态机的当前状态
+        self._intent: ConversationIntent | None = None
+        self._conv_id: int | None = None          # 当前会话 DB 行；惰性建（首个气泡时）
+        self._forced_end: ConversationEnd | None = None   # usher escalate 置位，循环消费
+
         self._running = False
         self._stop_event = asyncio.Event()
 
+    # ---- director 别名（读旧属性名的外部代码兼容）----------------------
+    @property
+    def director(self) -> Conductor:
+        return self.conductor
+
     # ---- 生命周期 ------------------------------------------------------
     async def run(self, max_turns: int | None = None) -> int:
-        """启动主循环。max_turns 非空时跑满该回合数后自动停（测试/演示用）。
+        """启动主循环。max_turns 非空时跑满该发言回合数后自动停（测试/演示用）。
 
         返回实际完成的发言回合数。
         """
@@ -107,6 +140,44 @@ class Orchestrator:
         self._running = False
         self._stop_event.set()
 
+    # ---- 会话状态机 ----------------------------------------------------
+    def _begin_conversation(self, last_end: ConversationEnd | None = None) -> None:
+        """seed / reseed：storyteller 为下一段会话播种意图，重置结束检测器。"""
+        self._intent = self.storyteller.seed(self.room, last_end)
+        self._conv_id = None                       # 惰性建表：首个气泡时才落库
+        self.detector.begin(self._intent)
+        log_event(
+            "conversation_seed",
+            intent_kind=self._intent.kind,
+            hook=self._intent.hook,
+            last_reason=(last_end.reason if last_end else None),
+        )
+
+    def _ensure_conversation_row(self) -> int | None:
+        """首个气泡时才把会话落库——空会话（冷场即散）不留垃圾行。"""
+        if (
+            self._conv_id is None
+            and self.store is not None
+            and self.room_id is not None
+            and self._intent is not None
+        ):
+            self._conv_id = self.store.start_conversation(
+                self.room_id, kind=self._intent.kind, hook=self._intent.hook
+            )
+        return self._conv_id
+
+    def _end_conversation(self, end: ConversationEnd) -> None:
+        if self._conv_id is not None and self.store is not None:
+            self.store.end_conversation(
+                self._conv_id,
+                reason=end.reason,
+                tension=end.tension,
+                summary=end.summary_hook,
+            )
+        log_event(
+            "conversation_end", reason=end.reason, tension=end.tension, conv_id=self._conv_id
+        )
+
     # ---- 摄入 ----------------------------------------------------------
     async def _ingest_loop(self) -> None:
         while self._running:
@@ -126,6 +197,7 @@ class Orchestrator:
             mid = self.store.append_message(
                 self.room_id, msg.speaker, msg.text,
                 external_id=msg.external_id, reply_to_id=reply_to,
+                conversation_id=self._conv_id,
             )
             if mid is None:
                 logger.debug("摄入去重：external_id=%s 已存在，跳过", msg.external_id)
@@ -137,6 +209,23 @@ class Orchestrator:
         )
         logger.info("摄入 [%s] %s", msg.speaker, msg.text)
         log_event("ingest", speaker=msg.speaker, msg_id=mid, reply_to=reply_to)
+        self._triage_user_input(msg)
+
+    def _triage_user_input(self, msg: InboundMessage) -> None:
+        """usher 台口分流：escalate → 置 user_forced，让 speak 循环提前收束当前会话。
+
+        误判只赔延迟不赔丢失——absorb 的输入已进历史，下个边界 storyteller 一定看到。
+        """
+        if self.usher is None:
+            return
+        decision = self.usher.classify(self.room, msg.text, speaker=msg.speaker)
+        if decision.escalate:
+            self._forced_end = ConversationEnd(
+                reason=USER_FORCED, summary_hook=msg.text, direction=decision.direction
+            )
+            log_event("usher_escalate", speaker=msg.speaker, direction=decision.direction)
+        else:
+            log_event("usher_absorb", speaker=msg.speaker)
 
     # ---- 回复寻址辅助 --------------------------------------------------
     def _internal_id_for_external(self, external_id: str | None) -> int | None:
@@ -182,37 +271,60 @@ class Orchestrator:
             logger.info("收到 /stop，准备停机")
             self.request_stop()
 
-    # ---- 发言 ----------------------------------------------------------
+    # ---- 发言（会话循环）----------------------------------------------
     async def _speak_loop(self, max_turns: int | None) -> int:
         turns = 0
+        self._begin_conversation()                   # 播种第一段会话
         while self._running:
             if max_turns is not None and turns >= max_turns:
                 break
             if self.switch.paused:
                 await self._sleep(self.idle_poll_s)
                 continue
-            speaker_id = self.director.next_speaker(self.room, self.agents)
-            if speaker_id is None or speaker_id not in self._agent_by_id:
-                await self._sleep(self.idle_poll_s)
+
+            # 用户强制收束优先：提前触发一次正常的边界交接（机制与自然结束统一）
+            forced = self._forced_end
+            if forced is not None:
+                self._forced_end = None
+                self._end_conversation(forced)
+                self._begin_conversation(last_end=forced)
                 continue
-            agent = self._agent_by_id[speaker_id]
-            log_event("schedule", agent=agent.name, model=agent.model_id)
-            try:
-                await self._speak(agent)
-            except Exception as exc:
-                # 单个 provider 抽风（鉴权失败/超时/限流）不应拖垮整屋子；
-                # 记下来、跳过这个角色本回合，其他角色照常热闹。
-                logger.exception("角色 %s 发言失败，跳过本回合", agent.name)
-                log_event("error", agent=agent.name, error=str(exc))
-            turns += 1
-            await self._maybe_compact()
-            await self._sleep(self.turn_interval_s)
+
+            speaker_id = self.conductor.next_speaker(self.room, self.agents)
+            spoke = speaker_id is not None and speaker_id in self._agent_by_id
+            if spoke:
+                agent = self._agent_by_id[speaker_id]
+                log_event("schedule", agent=agent.name, model=agent.model_id)
+                hook = self._intent.hook if self._intent else ""
+                try:
+                    await self._speak(agent, hook)
+                except Exception as exc:
+                    # 单个 provider 抽风（鉴权失败/超时/限流）不应拖垮整屋子。
+                    logger.exception("角色 %s 发言失败，跳过本回合", agent.name)
+                    log_event("error", agent=agent.name, error=str(exc))
+                turns += 1
+
+            # beat 观测 → 会话是否收束（带 reason）
+            self.detector.observe(self.room, spoke)
+            end = self.detector.check(self.room)
+            if end is not None:
+                self._end_conversation(end)
+                self._begin_conversation(last_end=end)
+
+            if spoke:
+                await self._maybe_compact()
+                await self._sleep(self.turn_interval_s)
+            elif end is None:
+                # 这一拍留白且未到 lull：等人插话，别空转
+                await self._sleep(self.idle_poll_s)
         return turns
 
-    async def _speak(self, agent: Agent) -> None:
+    async def _speak(self, agent: Agent, conductor_instruction: str = "") -> None:
+        conv_id = self._ensure_conversation_row()
         # 1) 组装 prompt（循环线程内，只读 room）；resolve 供超窗回复内联重注入
         system, messages = build_prompt(
-            self.world, self.room, agent, resolve=self._resolve_message
+            self.world, self.room, agent, conductor_instruction,
+            resolve=self._resolve_message,
         )
         # 2) 网络调用下放线程池（不碰 room，无竞争）
         resp = await asyncio.to_thread(
@@ -250,6 +362,7 @@ class Orchestrator:
                 mid = self.store.append_message(
                     self.room_id, agent.name, pb.display,
                     external_id=ext, reply_to_id=pb.reply_to,
+                    conversation_id=conv_id,
                 )
             meta = {"external_id": ext} if ext else None
             self.room.append(
