@@ -86,3 +86,55 @@ def test_load_room_state_composes():
     assert room.objective_relations == "客观关系"
     assert [m.speaker for m in room.history] == ["小丸子"]
     assert room.memory["a1"] == '{"k": 1}'
+
+
+def test_conversation_lifecycle():
+    s = _store()
+    rid = s.ensure_room("r1")
+    cid = s.start_conversation(rid, kind="chitchat", hook="聊聊天气")
+    assert s.count_conversations(rid) == 1
+    # 气泡挂到会话
+    s.append_message(rid, "小丸子", "今天真热", conversation_id=cid)
+    row = s.conn.execute(
+        "SELECT conversation_id FROM messages WHERE room_id=?", (rid,)
+    ).fetchone()
+    assert row["conversation_id"] == cid
+    # 未收束时 end_reason 为空
+    assert s.get_conversation(cid)["end_reason"] is None
+    # 收束
+    s.end_conversation(cid, reason="lull", tension=0.3, summary="没人接话")
+    conv = s.get_conversation(cid)
+    assert conv["end_reason"] == "lull"
+    assert conv["tension"] == 0.3
+    assert conv["summary"] == "没人接话"
+
+
+def test_recent_conversations_newest_first():
+    s = _store()
+    rid = s.ensure_room("r1")
+    c1 = s.start_conversation(rid, kind="chitchat")
+    c2 = s.start_conversation(rid, kind="develop_plot")
+    recent = s.recent_conversations(rid, limit=5)
+    assert [c["id"] for c in recent] == [c2, c1]   # 最新在前
+
+
+def test_conversation_id_column_added_by_migration(tmp_path):
+    # 旧库（messages 无 conversation_id 列）→ Store 打开时 _migrate 补列，写入不炸
+    import sqlite3
+    db = tmp_path / "old.sqlite"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        "CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, room_id INTEGER NOT NULL, "
+        "external_id TEXT, speaker TEXT NOT NULL, text TEXT NOT NULL, reply_to_id INTEGER, "
+        "ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP);"
+    )
+    conn.commit()
+    conn.close()
+
+    s = Store(db)                                  # 打开旧库 → 触发迁移
+    cols = {r["name"] for r in s.conn.execute("PRAGMA table_info(messages)")}
+    assert "conversation_id" in cols
+    rid = s.ensure_room("r1")
+    cid = s.start_conversation(rid, kind="chitchat")
+    mid = s.append_message(rid, "小丸子", "hi", conversation_id=cid)
+    assert mid is not None

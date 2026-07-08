@@ -24,7 +24,7 @@ def test_system_has_two_cached_layers():
 
 def test_history_and_tail_layout():
     world, room, agent = _fixture()
-    _, messages = build_prompt(world, room, agent, director_instruction="制造一点张力")
+    _, messages = build_prompt(world, room, agent, conductor_instruction="制造一点张力")
     # 2 条历史 + 1 条尾部
     assert len(messages) == 3
     # 仅最后一条历史消息挂缓存断点（滚动 breakpoint 3）
@@ -39,7 +39,7 @@ def test_history_and_tail_layout():
 def test_tail_contains_persona_memory_director():
     world, room, agent = _fixture()
     room.memory["a1"] = '{"notes": "上一轮很热闹"}'
-    _, messages = build_prompt(world, room, agent, director_instruction="制造一点张力")
+    _, messages = build_prompt(world, room, agent, conductor_instruction="制造一点张力")
     tail = messages[-1]["content"]
     assert "扮演的角色是「小丸子」" in tail
     assert "活泼、爱吵闹。" in tail          # 角色卡

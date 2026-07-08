@@ -10,9 +10,10 @@ from aichatgroup.prompts import load, render
 
 _ALL = [
     "usher.system", "usher.user",
-    "director.system", "director.user",
+    "conductor.system", "conductor.user",
+    "storyteller.system", "storyteller.user",
     "compaction.system", "compaction.user",
-    "output_contract", "tail_header", "tail_memory", "tail_director", "persona",
+    "output_contract", "tail_header", "tail_memory", "tail_conductor", "persona",
     "world", "layer1_summary", "layer1_relations",
 ]
 
@@ -29,8 +30,17 @@ def test_usher_prompt_lists_every_direction_and_absorb():
     assert "absorb" in text
 
 
-def test_director_prompt_mentions_none_contract():
-    assert "none" in load("director.system")
+def test_conductor_prompt_mentions_none_contract():
+    assert "none" in load("conductor.system")
+
+
+def test_storyteller_prompt_carries_output_contract_labels():
+    # KIND:/HOOK: 是 ModelStoryteller._parse 的机器契约；kind 词表也须在散文里
+    from aichatgroup.domain.conversation import INTENT_KINDS
+    text = load("storyteller.system")
+    assert "KIND:" in text and "HOOK:" in text
+    for kind in INTENT_KINDS:
+        assert kind in text, f"storyteller.system.md 缺意图种类 {kind!r}"
 
 
 def test_output_contract_carries_actual_marker_values():

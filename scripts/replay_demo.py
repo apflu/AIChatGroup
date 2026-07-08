@@ -102,21 +102,21 @@ def main() -> int:
             print("缺少 ANTHROPIC_API_KEY，无法 --live。", file=sys.stderr)
             return 2
         gateway = AnthropicGateway(api_key=settings.anthropic_api_key)
-        director = "现场很热闹，接着这个气氛自然地说几句。"
+        instruction = "现场很热闹，接着这个气氛自然地说几句。"
     else:
         gateway = make_mock_gateway(agents, args.turns)
-        director = ""
+        instruction = ""
 
     print("=" * 60)
     print("不夜港 · 群聊回放（%s）" % ("LIVE" if args.live else "MOCK"))
     print("=" * 60)
 
     total_read = total_creation = 0
-    # 简易 round-robin 调度（真正的 director 调度器在 M1）
+    # 简易 round-robin 调度（真正的 conductor 调度器在 M1）
     for turn in range(args.turns):
         agent = agents[turn % len(agents)]
         result = run_turn(gateway, world, room, agent,
-                          director_instruction=director, max_tokens=settings.max_tokens)
+                          conductor_instruction=instruction, max_tokens=settings.max_tokens)
         for bubble, pause in zip(result.bubbles, result.pauses):
             gap = f"   〔停 {pause:.1f}s〕" if pause > 0 else ""
             print(f"  {agent.name}: {bubble}{gap}")
