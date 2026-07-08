@@ -1,4 +1,4 @@
-"""ModelDirector —— 用便宜模型（默认 Haiku）决定下一个说话者。
+"""ModelConductor —— 用便宜模型（默认 Haiku）决定下一个说话者。
 
 设计目标：让群聊「像真人」——不是死板轮流，而是谁被点到、谁有话说谁接。
 但也要防刷屏：同一角色连说 max_consecutive 次后被强制排除。模型只在候选集里选，
@@ -17,11 +17,11 @@ from .base import consecutive_count, last_speaker_name
 
 logger = logging.getLogger(__name__)
 
-# 散文指令在 prompts/director.system.md；`none` 是机器契约（下方解析据它判留白），故此处仍显式处理。
-_DIRECTOR_SYSTEM = load_prompt("director.system")
+# 散文指令在 prompts/conductor.system.md；`none` 是机器契约（下方解析据它判留白），故此处仍显式处理。
+_CONDUCTOR_SYSTEM = load_prompt("conductor.system")
 
 
-class ModelDirector:
+class ModelConductor:
     def __init__(
         self,
         gateway: ModelGateway,
@@ -55,18 +55,18 @@ class ModelDirector:
         options = "、".join(a.id for a in eligible)
         hint = "，或 none" if self.allow_silence else ""
         user = render_prompt(
-            "director.user", roster=roster, recent=recent, options=options, hint=hint
+            "conductor.user", roster=roster, recent=recent, options=options, hint=hint
         )
         try:
             resp = self.gateway.complete(
-                system=[{"type": "text", "text": _DIRECTOR_SYSTEM}],
+                system=[{"type": "text", "text": _CONDUCTOR_SYSTEM}],
                 messages=[{"role": "user", "content": user}],
                 model_id=self.model_id,
                 max_tokens=16,
             )
             choice = resp.text.strip().lower()
         except Exception as exc:  # 模型/网络异常 → 规则兜底
-            logger.warning("director 模型调用失败，回退规则：%s", exc)
+            logger.warning("conductor 模型调用失败，回退规则：%s", exc)
             choice = ""
 
         by_id = {a.id.lower(): a.id for a in eligible}
@@ -79,5 +79,9 @@ class ModelDirector:
         if choice in by_id:
             return by_id[choice]
         # 非法输出 → 兜底选第一个合法候选
-        logger.debug("director 输出无法解析(%r)，回退首个候选", choice)
+        logger.debug("conductor 输出无法解析(%r)，回退首个候选", choice)
         return eligible[0].id if eligible else None
+
+
+# 迁移期别名：保住旧公共导出与外部引用，一个周期后可移除。
+ModelDirector = ModelConductor

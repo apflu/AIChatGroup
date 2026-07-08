@@ -8,7 +8,7 @@
   messages:
     [第2层 共享历史，逐条 user 消息，append-only]
         └─ 最后一条历史消息           ← 滚动 cache breakpoint 3
-    [第3层尾部 该角色人设 + 私有记忆 + director 指令 + 输出契约]  ← 不缓存
+    [第3层尾部 该角色人设 + 私有记忆 + conductor 指令（会话意图）+ 输出契约]  ← 不缓存
 
 历史全部用 user 角色（带 `[发言者]` 前缀），使得 system+history 前缀对所有 Agent
 逐字节相同 → 共享同一缓存车道；模型据此生成 assistant 回合即当前角色的气泡。
@@ -29,7 +29,7 @@ from ...prompts import load as load_prompt, render as render_prompt
 SystemBlock = dict
 Message = dict
 
-# 尾部散文都在 prompts/*.md（tail_header / tail_memory / tail_director / output_contract）；
+# 尾部散文都在 prompts/*.md（tail_header / tail_memory / tail_conductor / output_contract）；
 # marker 字面写在 output_contract.md 里，免去 f-string 的 `{{{{}}}}` 转义。
 # test_prompts 断言 BUBBLE_SEPARATOR / MEMORY_MARKER 的实际值出现在文本里，防与 markers.py 漂移。
 _OUTPUT_CONTRACT = load_prompt("output_contract")
@@ -39,13 +39,13 @@ def _cache(text: str) -> SystemBlock:
     return {"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}
 
 
-def build_tail(agent: Agent, memory_text: str, director_instruction: str) -> str:
-    """第 3 层尾部：人设 + 私有记忆快照 + director 指令 + 输出契约。"""
+def build_tail(agent: Agent, memory_text: str, conductor_instruction: str) -> str:
+    """第 3 层尾部：人设 + 私有记忆快照 + conductor 指令（会话意图 hook）+ 输出契约。"""
     parts = [load_prompt("tail_header"), agent.render_persona()]
     if memory_text.strip():
         parts.append(render_prompt("tail_memory", memory=memory_text.strip()))
-    if director_instruction.strip():
-        parts.append(render_prompt("tail_director", director=director_instruction.strip()))
+    if conductor_instruction.strip():
+        parts.append(render_prompt("tail_conductor", conductor=conductor_instruction.strip()))
     parts.append(_OUTPUT_CONTRACT)
     return "\n\n".join(parts)
 
@@ -74,11 +74,12 @@ def build_prompt(
     world: WorldBook,
     room: RoomState,
     agent: Agent,
-    director_instruction: str = "",
+    conductor_instruction: str = "",
     resolve: "Callable[[int], object] | None" = None,
 ) -> tuple[list[SystemBlock], list[Message]]:
     """组装一次调用的 (system_blocks, messages)。
 
+    conductor_instruction 是会话意图注入尾部的 hook（不缓存层，保共享前缀不变式）。
     resolve(id)->Message|None 用于把「超出近窗的被回复消息」取回内联引用（通常由 store 提供）。
     """
     system: list[SystemBlock] = [
@@ -98,6 +99,6 @@ def build_prompt(
         else:
             messages.append({"role": "user", "content": rendered})
 
-    tail = build_tail(agent, room.memory.get(agent.id, ""), director_instruction)
+    tail = build_tail(agent, room.memory.get(agent.id, ""), conductor_instruction)
     messages.append({"role": "user", "content": tail})  # 尾部，不缓存
     return system, messages

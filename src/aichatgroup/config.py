@@ -136,10 +136,13 @@ class Settings:
     # 额外的命名 provider（别名可配置；用 alias#model 引用）
     providers: list = field(default_factory=list)
 
-    # ---- M1 编排相关 ----
-    # 调度与 compaction 用便宜模型（Haiku）
-    director_model: str = DEFAULT_MODEL_HAIKU
+    # ---- M1/M2 编排相关 ----
+    # 调度（conductor）、usher、compaction 用便宜模型（Haiku）
+    director_model: str = DEFAULT_MODEL_HAIKU     # conductor 选人（历史名 director）
+    usher_model: str = DEFAULT_MODEL_HAIKU        # M2：用户输入台口分流
     compaction_model: str = DEFAULT_MODEL_HAIKU
+    # storyteller 是会话级重模型（低频、只在边界跑），默认用 Opus
+    storyteller_model: str = DEFAULT_MODEL_OPUS
     # 主循环节奏（秒）
     turn_interval_s: float = 1.5   # 两个发言回合之间的间隔（也顺带遵守 Telegram 限速）
     idle_poll_s: float = 2.0       # 暂停 / 无人接话时的轮询间隔
@@ -182,8 +185,12 @@ class Settings:
             model_opus=os.environ.get("AICG_MODEL_OPUS", DEFAULT_MODEL_OPUS),
             model_sonnet=os.environ.get("AICG_MODEL_SONNET", DEFAULT_MODEL_SONNET),
             model_haiku=os.environ.get("AICG_MODEL_HAIKU", DEFAULT_MODEL_HAIKU),
-            director_model=os.environ.get("AICG_MODEL_DIRECTOR", DEFAULT_MODEL_HAIKU),
+            director_model=os.environ.get(
+                "AICG_MODEL_CONDUCTOR", os.environ.get("AICG_MODEL_DIRECTOR", DEFAULT_MODEL_HAIKU)
+            ),
+            usher_model=os.environ.get("AICG_MODEL_USHER", DEFAULT_MODEL_HAIKU),
             compaction_model=os.environ.get("AICG_MODEL_COMPACTION", DEFAULT_MODEL_HAIKU),
+            storyteller_model=os.environ.get("AICG_MODEL_STORYTELLER", DEFAULT_MODEL_OPUS),
             turn_interval_s=_f("AICG_TURN_INTERVAL_S", 1.5),
             idle_poll_s=_f("AICG_IDLE_POLL_S", 2.0),
             max_history=_i("AICG_MAX_HISTORY", 60),

@@ -12,12 +12,22 @@
 常用符号在此层再导出，方便 `from aichatgroup import Agent, run_turn, Orchestrator`。
 """
 from .config import ProviderSpec, Settings, load_provider_specs
-from .message.conductor import Director, ModelDirector, RoundRobinDirector
+from .message.conductor import (
+    Conductor,
+    Director,
+    EndDetector,
+    ModelConductor,
+    ModelDirector,
+    RoundRobinConductor,
+    RoundRobinDirector,
+)
 from .message.usher import Usher, UsherDecision
 from .domain import (
     Agent,
     ChatMessage,
     ContentPart,
+    ConversationEnd,
+    ConversationIntent,
     Message,
     PacingConfig,
     RoomState,
@@ -28,6 +38,7 @@ from .domain import (
 from .message.generator import merge_memory, parse_turn_output, run_turn
 from .message.delivery import resolve_pauses
 from .story.memory import CompactionResult, maybe_compact
+from .story.storyteller import ModelStoryteller, Storyteller, StubStoryteller
 from .observability import log_event
 from .io.gateway import (
     AnthropicGateway,
@@ -52,6 +63,8 @@ __all__ = [
     "Message",
     "ContentPart",
     "ChatMessage",
+    "ConversationIntent",
+    "ConversationEnd",
     "PacingConfig",
     "RoomState",
     "TurnResult",
@@ -73,12 +86,20 @@ __all__ = [
     "merge_memory",
     "maybe_compact",
     "CompactionResult",
-    # conductor（原 director）+ usher
+    # conductor（统一命名；Director* 为迁移期别名）+ 会话结束检测
+    "Conductor",
+    "ModelConductor",
+    "RoundRobinConductor",
     "Director",
     "ModelDirector",
     "RoundRobinDirector",
+    "EndDetector",
+    # usher + storyteller
     "Usher",
     "UsherDecision",
+    "Storyteller",
+    "StubStoryteller",
+    "ModelStoryteller",
     # transport
     "Transport",
     "InboundMessage",

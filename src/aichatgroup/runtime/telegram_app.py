@@ -8,10 +8,12 @@ import asyncio
 import logging
 
 from ..config import Settings
-from ..message.conductor import ModelDirector
+from ..message.conductor import ModelConductor
+from ..message.usher import Usher
 from ..io.gateway import build_gateway
 from ..io.persistence import Store
 from ..presets import load_preset
+from ..story.storyteller import ModelStoryteller
 from ..io.transport import TelegramTransport
 from .orchestrator import Orchestrator
 
@@ -31,9 +33,11 @@ def build_orchestrator(
     if not tg.observer_token or not tg.chat_id:
         raise RuntimeError("预设缺少观察者 token 或 chat_id（检查 .env 与 *_env 配置）。")
 
-    # 按可用 key + 预设内嵌 provider 装配，按 别名#模型 路由（无可用 provider 会抛 RuntimeError）
+    # 按可用 key + 预设内嵌 provider 装配，按 别名::模型 路由（无可用 provider 会抛 RuntimeError）
     gateway = build_gateway(settings, extra_providers=preset.providers)
-    director = ModelDirector(gateway, settings.director_model)
+    conductor = ModelConductor(gateway, settings.director_model)
+    usher = Usher(gateway, settings.usher_model)
+    storyteller = ModelStoryteller(gateway, settings.storyteller_model)
 
     store = Store(settings.sqlite_path)
     room_id = store.ensure_room(preset.room_key)
@@ -48,8 +52,10 @@ def build_orchestrator(
         world=preset.world,
         agents=preset.agents,
         gateway=gateway,
-        director=director,
+        conductor=conductor,
         transport=transport,
+        storyteller=storyteller,
+        usher=usher,
         store=store,
         room_key=preset.room_key,
         max_tokens=settings.max_tokens,
