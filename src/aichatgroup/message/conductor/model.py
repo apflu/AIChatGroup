@@ -12,16 +12,13 @@ import logging
 
 from ...domain.types import Agent, RoomState
 from ...io.gateway import ModelGateway
+from ...prompts import load as load_prompt, render as render_prompt
 from .base import consecutive_count, last_speaker_name
 
 logger = logging.getLogger(__name__)
 
-_DIRECTOR_SYSTEM = (
-    "你是一个群聊导演，只负责决定「下一个由谁开口」，不替任何人说话。"
-    "读最近的对话，判断此刻谁接话最自然、最能让气氛热闹又不突兀。"
-    "只输出一个角色 id（在给定列表里），或者输出 none 表示此刻适合留白、等人开口。"
-    "不要输出除 id 或 none 之外的任何字符。"
-)
+# 散文指令在 prompts/director.system.md；`none` 是机器契约（下方解析据它判留白），故此处仍显式处理。
+_DIRECTOR_SYSTEM = load_prompt("director.system")
 
 
 class ModelDirector:
@@ -57,10 +54,8 @@ class ModelDirector:
         recent = "\n".join(m.render() for m in room.history[-self.recent_window :]) or "(还没有人说话)"
         options = "、".join(a.id for a in eligible)
         hint = "，或 none" if self.allow_silence else ""
-        user = (
-            f"# 在场角色（只能从这些 id 里选）\n{roster}\n\n"
-            f"# 最近对话\n{recent}\n\n"
-            f"请输出下一个开口的角色 id（{options}{hint}）："
+        user = render_prompt(
+            "director.user", roster=roster, recent=recent, options=options, hint=hint
         )
         try:
             resp = self.gateway.complete(

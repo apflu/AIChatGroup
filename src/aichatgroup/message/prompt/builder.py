@@ -22,21 +22,17 @@ ROADMAP —— 向 SillyTavern 预设结构靠拢：
 """
 from __future__ import annotations
 
-from ...domain.markers import BUBBLE_SEPARATOR, MEMORY_MARKER
 from ...domain.types import Agent, RoomState, WorldBook, render_parts
+from ...prompts import load as load_prompt, render as render_prompt
 
 # 返回给 Gateway 的结构：system 为 block 列表，messages 为 {role, content} 列表。
 SystemBlock = dict
 Message = dict
 
-_OUTPUT_CONTRACT = (
-    "请以该角色的身份、用中文发言。你可以连发 1~3 条简短的聊天气泡（模拟真人连发），"
-    f"相邻两条之间用 `{BUBBLE_SEPARATOR}` 分隔；如想控制停顿，可写 `{{{{SEPARATOR:2}}}}` 指定秒数，"
-    "省略则由系统按长度自动推断。动作/神态可用 `*…*` 包裹（如 *抱起琴*），其余视为台词。"
-    "只写你自己这个角色的话，绝不替其他角色或用户发言。\n"
-    f"如需更新你的私有记忆，可在全部气泡之后写 `{MEMORY_MARKER}` 再跟一段 JSON"
-    "（例如 {\"notes\": \"...\"}）；不需要则省略。"
-)
+# 尾部散文都在 prompts/*.md（tail_header / tail_memory / tail_director / output_contract）；
+# marker 字面写在 output_contract.md 里，免去 f-string 的 `{{{{}}}}` 转义。
+# test_prompts 断言 BUBBLE_SEPARATOR / MEMORY_MARKER 的实际值出现在文本里，防与 markers.py 漂移。
+_OUTPUT_CONTRACT = load_prompt("output_contract")
 
 
 def _cache(text: str) -> SystemBlock:
@@ -45,14 +41,11 @@ def _cache(text: str) -> SystemBlock:
 
 def build_tail(agent: Agent, memory_text: str, director_instruction: str) -> str:
     """第 3 层尾部：人设 + 私有记忆快照 + director 指令 + 输出契约。"""
-    parts = [
-        "==== 以下为本回合动态指令（每次调用可变，不缓存）====",
-        agent.render_persona(),
-    ]
+    parts = [load_prompt("tail_header"), agent.render_persona()]
     if memory_text.strip():
-        parts.append(f"# 你的私有记忆\n{memory_text.strip()}")
+        parts.append(render_prompt("tail_memory", memory=memory_text.strip()))
     if director_instruction.strip():
-        parts.append(f"# 导演指令\n{director_instruction.strip()}")
+        parts.append(render_prompt("tail_director", director=director_instruction.strip()))
     parts.append(_OUTPUT_CONTRACT)
     return "\n\n".join(parts)
 

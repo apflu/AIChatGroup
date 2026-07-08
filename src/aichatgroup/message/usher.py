@@ -19,21 +19,16 @@ from dataclasses import dataclass
 
 from ..domain.types import RoomState
 from ..io.gateway import ModelGateway
+from ..prompts import load as load_prompt, render as render_prompt
 
 logger = logging.getLogger(__name__)
 
-# escalate 时的方向标签（推进 / 捣乱 / 试探 / 拐弯）
+# escalate 时的方向标签（推进 / 捣乱 / 试探 / 拐弯）。这是**机器契约**（parser 据此分流），
+# 留在解析器身边；散文指令在 prompts/usher.system.md，test_prompts 断言这些词都出现在其中，防漂移。
 DIRECTIONS = ("advance", "disrupt", "probe", "swerve")
 _ABSORB = "absorb"
 
-_USHER_SYSTEM = (
-    "你是群聊的引导者（usher），站在台口决定一条**用户输入**该怎么处理。"
-    "判据只有一个：这句话需不需要「世界」做出回应——不是它激不激进、也不是礼不礼貌。"
-    "普通闲聊、附和、不改变局面的话 → 输出 absorb。"
-    "需要世界回应的话（推动剧情=advance、捣乱=disrupt、试探设定=probe、突然拐弯=swerve，"
-    "或任何与世界设定冲突、哪怕语气平静的话）→ 输出对应的那个词。"
-    "只输出 absorb / advance / disrupt / probe / swerve 之中的一个词，别的都不要。"
-)
+_USHER_SYSTEM = load_prompt("usher.system")
 
 
 @dataclass
@@ -59,11 +54,7 @@ class Usher:
         recent = "\n".join(
             m.render() for m in room.history[-self.recent_window :]
         ) or "（还没有人说话）"
-        user = (
-            f"# 最近对话\n{recent}\n\n"
-            f"# 刚进来的用户输入\n[{speaker}] {text}\n\n"
-            "这条用户输入需不需要世界回应？只输出一个词："
-        )
+        user = render_prompt("usher.user", recent=recent, speaker=speaker, text=text)
         try:
             resp = self.gateway.complete(
                 system=[{"type": "text", "text": _USHER_SYSTEM}],

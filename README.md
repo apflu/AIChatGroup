@@ -48,10 +48,11 @@ uv run --with anthropic --with python-telegram-bot \
 | 子包 / 模块 | 职责 |
 | --- | --- |
 | `domain/` | 共享内核：`types.py`（`Message`/`ContentPart`/`WorldBook`/`Agent`/`RoomState` ...）+ `markers.py`（控制标记词表） |
+| `prompts/` | **整段 prompt 文本资产**（复数）：system + user 模板 + 世界/尾部/人设片段（`*.system.md`/`*.user.md`/`world.md`/`tail_*.md`/`persona.md`…），运行时数据用 `$slot` 回填（`render()`）。散文集中、便于手改、字面 `{{marker}}`/`{json}` 无需转义。机器契约（marker 值/`DIRECTIONS`/`none`/MockGateway 认角色正则）仍是代码常量、留解析器身边 |
 | `message/conductor/` | 编导（原 director）：`rule.py`（RoundRobin，离线）、`model.py`（`ModelDirector`，Haiku 决定谁说话） |
 | `message/generator/` | 生成回合：`turn.py`（发言回合）、`parsing.py`（多气泡+记忆增量） |
 | `message/delivery/` | 演出：`pacing.py`（气泡节奏）；后续加交错队列 + 抢占 |
-| `message/prompt/` | `builder.py`：分层 Prompt 组装 + 显式 `cache_control` 断点 |
+| `message/prompt/` | `builder.py`：分层 Prompt **组装逻辑**（单数）+ 显式 `cache_control` 断点（散文取自 `prompts/`） |
 | `story/memory/` | `compaction.py`：历史压缩（暗线平面唯一已落地块；storyteller / sim 待建） |
 | `io/gateway/` | Model Gateway：`base.py`、`anthropic_gateway.py`、`openai_gateway.py`（含兼容端点）、`gemini_gateway.py`、`router.py`（按 model_id 分发）、`factory.py`（按 key 装配）、`mock.py` |
 | `io/transport/` | 收发边界：`base.py`（`Transport` 协议）、`memory.py`（测试）、`telegram.py`（M1 落地，懒加载 ptb） |

@@ -43,6 +43,11 @@ aichatgroup/
 │   ├── ordering.py        #   ★NEW 偏序/DAG：BubbleGraph、depends_on、topological_sort
 │   └── beat.py            #   ★NEW BeatPlan / SpeakIntent（编排的数据结构，非逻辑）
 │
+├── prompts/               # 【文本资产】整段 prompt：system+user 模板 + world/tail/persona 片段（*.md）
+│                          #   运行时数据用 $slot 回填（string.Template，字面 {{marker}}/{json} 免转义）。
+│                          #   loader 无 import 依赖 → 谁都可 load/render（连 domain 都用它渲 persona），不产生平面耦合。
+│                          #   机器契约（marker 值/DIRECTIONS/none/MockGateway 正则）仍是代码常量，留解析器身边，靠 test 防漂移。
+│
 ├── message/               # 【前台平面】消息流（纯文本，不碰 tool）
 │   ├── conductor/         #   谁说话 + 编排 beat（原 director/）
 │   │   ├── base.py  rule.py  model.py

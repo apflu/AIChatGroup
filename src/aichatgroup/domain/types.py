@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ..prompts import render as render_prompt
+
 
 @dataclass
 class WorldBook:
@@ -16,7 +18,7 @@ class WorldBook:
     rules: str
 
     def render(self) -> str:
-        return f"# 世界观圣经\n{self.bible.strip()}\n\n# 群聊规则\n{self.rules.strip()}"
+        return render_prompt("world", bible=self.bible.strip(), rules=self.rules.strip())
 
 
 @dataclass
@@ -56,7 +58,7 @@ class Agent:
         parts = []
         if self.base_prompt.strip():
             parts.append(self.base_prompt.strip())
-        parts.append(f"你现在扮演的角色是「{self.name}」。")
+        parts.append(render_prompt("persona", name=self.name))
         if self.character_card.strip():
             parts.append(self.character_card.strip())
         return "\n\n".join(parts)
@@ -145,9 +147,9 @@ class RoomState:
     def render_layer1(self) -> str:
         parts = []
         if self.long_term_summary.strip():
-            parts.append(f"# 前情提要\n{self.long_term_summary.strip()}")
+            parts.append(render_prompt("layer1_summary", summary=self.long_term_summary.strip()))
         if self.objective_relations.strip():
-            parts.append(f"# 客观关系图谱\n{self.objective_relations.strip()}")
+            parts.append(render_prompt("layer1_relations", relations=self.objective_relations.strip()))
         return "\n\n".join(parts) if parts else "(暂无长期摘要)"
 
     def append(

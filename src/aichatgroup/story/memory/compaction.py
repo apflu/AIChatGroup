@@ -14,14 +14,11 @@ from dataclasses import dataclass
 
 from ...domain.types import RoomState, WorldBook
 from ...io.gateway import ModelGateway
+from ...prompts import load as load_prompt, render as render_prompt
 
 logger = logging.getLogger(__name__)
 
-_COMPACT_SYSTEM = (
-    "你是群聊的记录员。把给定的一段较早的对话压缩成简洁、客观的叙事摘要，"
-    "保留：谁做了什么、关系变化、达成或搁置的事、遗留的伏笔。不要逐条复述，"
-    "不要评论。若给了既有摘要，把新内容自然并入，输出合并后的完整摘要。"
-)
+_COMPACT_SYSTEM = load_prompt("compaction.system")
 
 
 @dataclass
@@ -50,11 +47,8 @@ def maybe_compact(
 
     transcript = "\n".join(m.render() for m in old)
     prior = room.long_term_summary.strip() or "(暂无既有摘要)"
-    user = (
-        f"# 世界背景（仅供理解，不必复述）\n{world.bible.strip()}\n\n"
-        f"# 既有摘要\n{prior}\n\n"
-        f"# 需要并入摘要的较早对话\n{transcript}\n\n"
-        "请输出合并后的完整摘要："
+    user = render_prompt(
+        "compaction.user", bible=world.bible.strip(), prior=prior, transcript=transcript
     )
     resp = gateway.complete(
         system=[{"type": "text", "text": _COMPACT_SYSTEM}],
