@@ -36,6 +36,7 @@ _EVENT_LEVELS = {
     "ingest": "TRACE",              # ingested an external message
     "model_call": "TRACE",          # per-call output + cache counts (readable, for cache diagnosis)
     "model_raw": FIREHOSE,          # raw model output before parsing (filter-miss / prompt-effect)
+    "reply_resolve": FIREHOSE,      # {{REPLY}}/内联句柄的内部 id → 被回复消息的 external_id（含超窗→None）
     "compaction": "INFO",           # history compaction
     "error": "ERROR",               # a turn failed, etc.
 }

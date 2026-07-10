@@ -21,6 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from aichatgroup.config import Settings
 from aichatgroup.logging_setup import setup_logging
 from aichatgroup.runtime.telegram_app import serve
 
@@ -39,6 +40,7 @@ def main() -> int:
         except Exception:
             pass
 
+    Settings.from_env()  # 先加载 .env，AICG_LOG_LEVEL 才读得到（否则用默认级别）
     setup_logging(os.environ.get("AICG_LOG_LEVEL", "INFO"))
     print("=" * 60)
     print(f"不夜港 · Telegram 群聊运行中（preset={args.preset}，Ctrl-C 停）")

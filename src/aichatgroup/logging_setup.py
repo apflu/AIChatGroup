@@ -54,6 +54,14 @@ def setup_logging(level: str | int = "INFO") -> None:
     global _CONFIGURED
     if _CONFIGURED:
         return
+    from . import observability  # noqa: F401 —— 触发 FIREHOSE 等自定义级别注册，供下面按名匹配
+    if isinstance(level, str):
+        level = level.upper()    # 容忍 env 里写小写（loguru 级别名区分大小写，如 firehose→FIREHOSE）
+        try:
+            logger.level(level)
+        except ValueError:
+            logger.warning("未知日志级别 %r，回退 INFO", level)
+            level = "INFO"
     logger.remove()  # 清掉 loguru 默认 handler
     logger.add(sys.stderr, level=level, format=_CONSOLE_FORMAT, enqueue=False)
     # stdlib → loguru：根 logger 挂拦截器，level=0 放行全部交给 loguru 决定

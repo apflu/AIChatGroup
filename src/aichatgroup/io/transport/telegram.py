@@ -9,8 +9,11 @@
 
 依赖 python-telegram-bot（v20+，异步）。懒加载：不装也能跑离线/测试（用 InMemoryTransport）。
 
-⚠️ 必须在 BotFather 里对观察者 bot 关掉 privacy mode（/setprivacy → Disable），
-否则它只能收到命令、收不到群里的普通消息。
+⚠️ **所有 bot 都要在 BotFather 关掉 privacy mode**（/setprivacy → Disable）：
+- 观察者 bot：否则只收命令、收不到群里普通消息（摄入必需）。
+- 角色 bot：privacy on 时该 bot 对群里非自己发的消息"不可见"，`reply_to_message_id` 指向人类消息会
+  报 "message to be replied not found"。关掉后才能原生 reply 人类消息。
+  （bot 之间互 reply 是 telegram 硬限制，关 privacy 也不行——见 orchestrator._speak 的 native_reply 判断。）
 """
 from __future__ import annotations
 
@@ -118,6 +121,17 @@ class TelegramTransport:
             sent = await bot.send_message(**kwargs)
             return f"{self.chat_id}:{sent.message_id}"  # 供后续消息回复它
         except Exception as exc:  # pragma: no cover
+            # 回复目标失效（"Message to be replied not found" 等）不该让整条消息消失：
+            # 去掉 reply 降级重发一次，宁可丢回复关系也别丢发言。
+            if "reply_to_message_id" in kwargs:
+                logger.warning("send_text(%s) 带回复失败（%s），降级为普通发送", agent.name, exc)
+                kwargs.pop("reply_to_message_id")
+                try:
+                    sent = await bot.send_message(**kwargs)
+                    return f"{self.chat_id}:{sent.message_id}"
+                except Exception as exc2:
+                    logger.warning("send_text(%s) 降级后仍失败：%s", agent.name, exc2)
+                    return None
             logger.warning("send_text(%s) 失败：%s", agent.name, exc)
             return None
 

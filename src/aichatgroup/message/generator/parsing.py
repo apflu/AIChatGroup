@@ -147,9 +147,10 @@ def _strip_self_tag(bubble: str, name: str) -> str:
 # 两种情形要分开：
 #  - **气泡首**的裸句柄：模型模仿历史行 `⟦id⟧ [name]` 的书式，是格式回显、非引用 → 剥掉、不当回复。
 #  - **正文中**的句柄（如 `朝⟦4⟧那边`）：模型想指向某条消息，是引用意图 → 剥掉防泄漏，
-#    并把首个当作回复兜底（模型没走 {{REPLY}} 时的救济）。
+#    并把首个当作回复兜底（模型没走 {{REPLY}} 时的救济）。兜底安全的前提是回复只在**近窗**内落地
+#    （见 orchestrator 启动只加载近窗 + telegram send 带 reply 失败降级重发），故不会再回复到失效的旧 id。
 _HANDLE_ECHO_RE = re.compile(r"^\s*⟦\s*\d+\s*⟧\s*")     # 行首格式回显
-_HANDLE_ANY_RE = re.compile(r"⟦\s*(\d+)\s*⟧")           # 任意位置（正文引用）
+_HANDLE_ANY_RE = re.compile(r"⟦\s*(\d+)\s*⟧")           # 任意位置（正文引用，捕获首个作兜底）
 # 保险丝：模型若回显人类行的 `<user>` 种类 tag（正常不该，AI 行本就不带）。
 # 和 ⟦id⟧ 同属"AI 绝不该产出"的内部 tag，全局剥掉防泄漏（含首部误回显 `<user> [名字] …`）。
 _USER_TAG_ANY_RE = re.compile(r"<\s*user\s*>", re.IGNORECASE)
@@ -168,7 +169,7 @@ def _extract_reply(bubble: str) -> tuple[str, int | None]:
 
 def _scrub_inline_markers(bubble: str) -> tuple[str, int | None]:
     """剥掉正文里残留的内部标记（⟦id⟧、非首部的 {{REPLY:id}}）防泄漏。
-    返回 (clean, 首个句柄 id 或 None)——首个句柄供调用方在没有显式 {{REPLY}} 时兜底成回复目标。"""
+    返回 (clean, 首个内联句柄 id 或 None)——供调用方在没有显式 {{REPLY}} 时兜底成回复目标。"""
     m = _HANDLE_ANY_RE.search(bubble)
     first = int(m.group(1)) if m else None
     cleaned = _HANDLE_ANY_RE.sub("", bubble)

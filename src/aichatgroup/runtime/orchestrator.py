@@ -103,9 +103,17 @@ class Orchestrator:
         self.room_id: int | None = None
         if store is not None:
             self.room_id = store.ensure_room(room_key)
-            self.room = room or store.load_room_state(self.room_id)
+            # 只把**近窗**灌进 room.history，别全量加载。持久 sqlite 跨运行累积全部消息，
+            # 全量会让模型看到上次运行的旧 ⟦id⟧ 并回复它们——那些 telegram message_id 早已失效，
+            # reply 必然 "Message to be replied not found"。近窗内的 external_id 才是本次运行仍有效的。
+            self.room = room or store.load_room_state(self.room_id, history_limit=max_history)
         else:
             self.room = room or RoomState()
+
+        # 本进程期间实际收发过的消息内部 id（其 external_id 是当前 telegram 会话里新鲜有效的）。
+        # telegram reply 只挂在这些上——启动从 store 加载的历史即便落在近窗，其 message_id 可能属于
+        # 上次运行/已被删，reply 会 "Message to be replied not found"。那些历史一律走 builder 内联引用。
+        self._live_external_ids: set[int] = set()
 
         # 会话状态机的当前状态
         self._intent: ConversationIntent | None = None
@@ -275,14 +283,16 @@ class Orchestrator:
         return None
 
     def _external_for_internal_id(self, mid: int | None) -> str | None:
+        """给 telegram reply 找被回复消息的 external_id——**只在近窗内找**。
+        超窗（已滑出 room.history）刻意返回 None：那些 telegram message_id 多已失效
+        （尤其跨运行的），硬 reply 会 "Message to be replied not found"；而被回复的内容
+        已由 builder 的超窗内联重注入承载（见 test_cross_window_reply_reinjects_from_store），
+        无需再挂 telegram 的 reply 引用。近窗/超窗二分即 plan 定的边界。"""
         if mid is None:
             return None
-        for m in reversed(self.room.history):        # 近窗优先
+        for m in reversed(self.room.history):
             if m.id == mid:
                 return m.meta.get("external_id")
-        if self.store is not None and self.room_id is not None:
-            t = self.store.get_message(self.room_id, mid)
-            return t.meta.get("external_id") if t is not None else None
         return None
 
     def _resolve_message(self, mid: int):
@@ -400,8 +410,27 @@ class Orchestrator:
                 await self.transport.send_typing(agent)
                 if pause > 0:
                     await self._sleep(pause)
-                # 若这条回复了历史某条，解析出被回复消息的 external_id 一起发给 transport
+                # 若这条回复了历史某条，解析出被回复消息的 external_id 一起发给 transport。
+                # telegram 可见性限制：角色 bot 只能原生 reply **人类消息**（需该 bot 已关 privacy mode，
+                # 否则对群里非自己发的消息不可见 → "message to be replied not found"）或**自己发的**消息；
+                # reply 另一个角色 bot 的消息是硬限制、关 privacy 也不行。不能原生 reply 的目标就不挂
+                # telegram reply——回复关系仍由 builder 内联引用 + reply_to_id 承载。降级重发是最后兜底。
                 target_ext = self._external_for_internal_id(pb.reply_to)
+                if pb.reply_to is not None:
+                    tgt = next(
+                        (m for m in reversed(self.room.history) if m.id == pb.reply_to), None
+                    )
+                    native_ok = tgt is not None and (
+                        tgt.author_kind == "human" or tgt.speaker == agent.name
+                    )
+                    if not native_ok:
+                        target_ext = None
+                    log_event(
+                        "reply_resolve", agent=agent.name, reply_to=pb.reply_to,
+                        external_id=target_ext, native_reply=native_ok,
+                        target=(f"{tgt.speaker}({tgt.author_kind}): {tgt.text[:24]}"
+                                if tgt is not None else "(不在近窗)"),
+                    )
                 ext = await self.transport.send_text(
                     agent, speech, reply_to_external_id=target_ext
                 )

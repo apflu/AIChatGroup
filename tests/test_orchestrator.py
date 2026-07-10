@@ -2,7 +2,7 @@
 import asyncio
 
 from aichatgroup.message.conductor import RoundRobinDirector
-from aichatgroup.domain import Agent, WorldBook
+from aichatgroup.domain import Agent, RoomState, WorldBook
 from aichatgroup.io.gateway import MockGateway
 from aichatgroup.io.persistence import Store
 from aichatgroup.runtime import Orchestrator
@@ -130,6 +130,84 @@ def test_one_provider_failure_does_not_crash_loop():
     sent = [aid for aid, _ in orch.transport.sent]
     assert sent == ["a1", "a3"]                  # 阿福(a2)没发，但没拖垮循环
     assert [t for _, t in orch.transport.sent] == ["嗨", "灯火明"]
+
+
+def test_startup_loads_only_near_window_not_full_history():
+    # 持久 sqlite 跨运行累积全部消息；启动只该把近窗灌进 room.history，
+    # 否则模型会看到旧 ⟦id⟧ 并回复失效的 telegram message_id（"Message to be replied not found"）。
+    store = Store(":memory:")
+    rid = store.ensure_room("default")
+    for i in range(30):
+        store.append_message(rid, "小丸子", f"旧消息{i}", external_id=f"c:{i}")
+    orch = Orchestrator(
+        world=_world(), agents=_agents(), gateway=_mock_gateway(),
+        director=RoundRobinDirector(), transport=InMemoryTransport(),
+        store=store, max_history=10, keep_last=5,
+        turn_interval_s=0.0, idle_poll_s=0.0, sleep=_fast_sleep,
+    )
+    assert len(orch.room.history) == 10                 # 只近窗（max_history），非全部 30 条
+    assert orch.room.history[-1].text == "旧消息29"     # 保留的是最近的
+    assert orch.room.history[0].text == "旧消息20"
+
+
+def test_outbound_reply_to_out_of_window_id_sends_without_reply():
+    # 回复一个已滑出近窗的旧 id：不该把陈旧 external_id 传给 telegram（会 not found），
+    # target_ext 应为 None（超窗引用靠 builder 内联，不挂 telegram reply）。
+    store = Store(":memory:")
+    rid = store.ensure_room("default")
+    old = store.append_message(rid, "小丸子", "很旧的话", external_id="c:1")
+    gw = MockGateway()
+    gw.push_script("小丸子", [f"{{{{REPLY:{old}}}}}接着那句"])   # 回复超窗旧 id
+    orch = Orchestrator(
+        world=_world(), agents=[Agent(id="a1", name="小丸子", model_id="m", base_prompt="活泼。")],
+        gateway=gw, director=RoundRobinDirector(), transport=InMemoryTransport(),
+        store=store, room=RoomState(),                  # 空 room → old 不在近窗
+        turn_interval_s=0.0, idle_poll_s=0.0, sleep=_fast_sleep,
+    )
+    asyncio.run(orch.run(max_turns=1))
+    rec = orch.transport.sent_records[-1]
+    assert rec["text"] == "接着那句"
+    assert rec["reply_to"] is None                       # 超窗 → 不带 telegram reply
+    assert store.load_history(orch.room_id)[-1].reply_to == old  # 但 reply_to_id 仍持久化
+
+
+def test_agent_cannot_native_reply_another_agents_message():
+    # telegram 限制：bot 不能 reply 另一个 bot 的消息 → 不挂 telegram reply（但 reply_to_id 仍存、靠内联表达）
+    store = Store(":memory:")
+    gw = MockGateway()
+    gw.push_script("小丸子", ["先说一句"])                 # id 1（agent 小丸子）
+    gw.push_script("阿福", ["{{REPLY:1}}我接你话"])         # 阿福 reply 小丸子（另一个 agent bot）
+    orch = Orchestrator(
+        world=_world(),
+        agents=[
+            Agent(id="a1", name="小丸子", model_id="m", base_prompt="活泼。"),
+            Agent(id="a2", name="阿福", model_id="m", base_prompt="沉稳。"),
+        ],
+        gateway=gw, director=RoundRobinDirector(), transport=InMemoryTransport(),
+        store=store, turn_interval_s=0.0, idle_poll_s=0.0, sleep=_fast_sleep,
+    )
+    asyncio.run(orch.run(max_turns=2))
+    rec = orch.transport.sent_records[-1]
+    assert rec["text"] == "我接你话"
+    assert rec["reply_to"] is None                          # 跨 bot → 不挂 telegram reply
+    assert store.load_history(orch.room_id)[-1].reply_to == 1  # 但 reply_to_id 仍持久化
+
+
+def test_agent_can_native_reply_human_message():
+    # 角色 bot 能原生 reply 人类消息（telegram 允许 bot reply 用户消息）
+    store = Store(":memory:")
+    gw = MockGateway()
+    gw.push_script("小丸子", ["{{REPLY:1}}回你一句"])
+    orch = Orchestrator(
+        world=_world(), agents=[Agent(id="a1", name="小丸子", model_id="m", base_prompt="活泼。")],
+        gateway=gw, director=RoundRobinDirector(), transport=InMemoryTransport(),
+        store=store, turn_interval_s=0.0, idle_poll_s=0.0, sleep=_fast_sleep,
+    )
+    orch._handle_inbound(InboundMessage(speaker="PL", text="人类发言", external_id="c:9"))  # id 1, human
+    asyncio.run(orch.run(max_turns=1))
+    rec = orch.transport.sent_records[-1]
+    assert rec["text"] == "回你一句"
+    assert rec["reply_to"] == "c:9"                          # 人类消息可原生 reply
 
 
 def test_delivery_splits_gesture_beat_and_speech():

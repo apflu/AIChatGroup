@@ -86,8 +86,8 @@ def main() -> int:
         except Exception:
             pass
 
+    settings = Settings.from_env()  # 先加载 .env，AICG_LOG_LEVEL 才读得到（否则用默认级别）
     setup_logging(os.environ.get("AICG_LOG_LEVEL", "DEBUG"))
-    settings = Settings.from_env()
     preset = load_preset(args.preset)
 
     try:

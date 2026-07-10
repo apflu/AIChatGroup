@@ -201,7 +201,7 @@ def test_echoed_handle_is_stripped():
 
 
 def test_inline_handle_is_stripped_and_becomes_reply():
-    # 正文中出现的 ⟦4⟧（如 "朝⟦4⟧那边"）是引用意图 → 剥掉防泄漏，首个当回复兜底
+    # 正文中的 ⟦4⟧（如 "朝⟦4⟧那边"）是引用意图 → 剥掉防泄漏，首个当回复兜底（近窗内落地才安全）
     bubbles, _ = parse_turn_output("*朝⟦4⟧那边扬了扬下巴* 问谁呀？", speaker="阿福")
     (b,) = bubbles
     assert "⟦" not in b.display and "4" not in b.display
