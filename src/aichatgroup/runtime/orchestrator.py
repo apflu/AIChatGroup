@@ -370,8 +370,9 @@ class Orchestrator:
         # 原始模型输出先落 FIREHOSE（解析前），便于诊断"回复未命中 filter"/prompt 效果
         log_model_raw("generator", resp.text, agent=agent.name)
         parsed, memory_delta = parse_turn_output(resp.text, speaker=agent.name)
+        # 停顿按**台词**长度算（动作已剥离、不由角色 bot 打字）；纯举动气泡台词为空、停顿退到基础值
         pauses = resolve_pauses(
-            [pb.display for pb in parsed], [pb.pause_hint for pb in parsed], agent.pacing
+            [pb.text for pb in parsed], [pb.pause_hint for pb in parsed], agent.pacing
         )
         logger.info(
             "回合 %s bubbles=%d cache_read=%d cache_creation=%d",
@@ -385,16 +386,25 @@ class Orchestrator:
             cache_read=resp.usage.cache_read_input_tokens,
             cache_creation=resp.usage.cache_creation_input_tokens,
         )
-        # 4) 逐条发送：typing → 等 pause → 发气泡（动作+语言渲染）→ 入历史（模拟真人连发）
+        # 4) 逐条发送，按 kind 分流投递（两平面：舞台层不由角色第一人称括号发）：
+        #    举动(beat) → 旁白 bot 0 第三人称播报；神态(gesture) → 隐去；台词(speech) → 角色 bot。
+        #    历史/持久化仍存完整 display（含动作括号）→ 模型上下文与共享缓存前缀不变。
         for pb, pause in zip(parsed, pauses):
-            await self.transport.send_typing(agent)
-            if pause > 0:
-                await self._sleep(pause)
-            # 若这条气泡回复了历史某条，解析出被回复消息的 external_id 一起发给 transport
-            target_ext = self._external_for_internal_id(pb.reply_to)
-            ext = await self.transport.send_text(
-                agent, pb.display, reply_to_external_id=target_ext
-            )
+            # 举动先由旁白公之于众（多数是「先动手、再开口」）
+            for beat in pb.beats:
+                await self.transport.send_system(f"{agent.name}{beat}")
+            # 台词 → 角色 bot（纯举动气泡台词为空则不发，但仍入历史保留动作）
+            speech = pb.text
+            ext = None
+            if speech.strip():
+                await self.transport.send_typing(agent)
+                if pause > 0:
+                    await self._sleep(pause)
+                # 若这条回复了历史某条，解析出被回复消息的 external_id 一起发给 transport
+                target_ext = self._external_for_internal_id(pb.reply_to)
+                ext = await self.transport.send_text(
+                    agent, speech, reply_to_external_id=target_ext
+                )
             # store id 为权威 handle；回填 external_id（供后续消息回复本条）+ reply_to_id
             mid = None
             if self.store is not None and self.room_id is not None:

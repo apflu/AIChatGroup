@@ -132,6 +132,46 @@ def test_one_provider_failure_does_not_crash_loop():
     assert [t for _, t in orch.transport.sent] == ["嗨", "灯火明"]
 
 
+def test_delivery_splits_gesture_beat_and_speech():
+    # 神态(*…*)隐去、举动({{ACT:…}})托管旁白 bot 0、台词由角色 bot 发；历史仍保留完整动作
+    gw = MockGateway()
+    gw.push_script("小丸子", [
+        "*猛地一拍吧台* 哎呀阿福！{{SEPARATOR}}{{ACT:掏出一封信推过去}}给你的",
+    ])
+    store = Store(":memory:")
+    orch = Orchestrator(
+        world=_world(), agents=_agents(), gateway=gw,
+        director=RoundRobinDirector(), transport=InMemoryTransport(),
+        store=store, turn_interval_s=0.0, idle_poll_s=0.0, sleep=_fast_sleep,
+    )
+    asyncio.run(orch.run(max_turns=1))
+    t = orch.transport
+    # 角色 bot 只发台词（无动作括号、无神态）
+    assert [txt for _, txt in t.sent] == ["哎呀阿福！", "给你的"]
+    # 举动交旁白 bot 0 第三人称播报；神态隐去、不播报
+    assert t.system_sent == ["小丸子掏出一封信推过去"]
+    # 历史/持久化仍保留完整动作（神态+举动括号）→ 模型上下文与缓存不变
+    joined = " ".join(m.render() for m in store.load_history(orch.room_id))
+    assert "（猛地一拍吧台）" in joined and "（掏出一封信推过去）" in joined
+
+
+def test_pure_gesture_bubble_sends_nothing_to_chat():
+    # 纯神态气泡：聊天流里完全隐去（角色 bot 不发、旁白也不发），但仍入历史
+    gw = MockGateway()
+    gw.push_script("小丸子", ["*若有所思地摩挲酒杯*{{SEPARATOR}}其实我早想说了"])
+    store = Store(":memory:")
+    orch = Orchestrator(
+        world=_world(), agents=_agents(), gateway=gw,
+        director=RoundRobinDirector(), transport=InMemoryTransport(),
+        store=store, turn_interval_s=0.0, idle_poll_s=0.0, sleep=_fast_sleep,
+    )
+    asyncio.run(orch.run(max_turns=1))
+    t = orch.transport
+    assert [txt for _, txt in t.sent] == ["其实我早想说了"]  # 纯神态那条没发
+    assert t.system_sent == []                                # 神态不播报
+    assert store.count_messages(orch.room_id) == 2            # 但两条都进历史
+
+
 def test_paused_blocks_chatter():
     orch = _make_orch(store=None)
     orch.switch.pause()

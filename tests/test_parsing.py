@@ -56,36 +56,52 @@ def test_explicit_pause_with_spaces():
 
 
 # ---- 动作 / 语言 parts -------------------------------------------------
-def test_asterisk_action_split():
+def test_asterisk_is_gesture():
+    # 单星号 = 神态(gesture)：聊天流里隐去、不进 beats；但历史 display 仍渲染括号（缓存不变）
     bubbles, _ = parse_turn_output("*抱起琴* 大哥别急着走呀~")
     (b,) = bubbles
     assert [(p.kind, p.text) for p in b.parts] == [
-        ("action", "抱起琴"), ("speech", "大哥别急着走呀~")
+        ("gesture", "抱起琴"), ("speech", "大哥别急着走呀~")
     ]
-    assert b.text == "大哥别急着走呀~"            # 仅语言
-    assert b.display == "（抱起琴）大哥别急着走呀~"  # 动作+语言渲染
+    assert b.text == "大哥别急着走呀~"            # 角色 bot 实发（动作剥离）
+    assert b.beats == []                          # 神态不托管旁白
+    assert b.display == "（抱起琴）大哥别急着走呀~"  # 历史渲染不变
 
 
-def test_marker_action_split():
-    bubbles, _ = parse_turn_output("{{ACTION}}抱起琴{{/ACTION}}你好")
+def test_act_marker_is_beat():
+    # {{ACT:…}} = 举动(beat)：托管旁白；进 beats、不进台词
+    bubbles, _ = parse_turn_output("{{ACT:掏出匕首}}你敢动试试")
     (b,) = bubbles
-    assert [(p.kind, p.text) for p in b.parts] == [("action", "抱起琴"), ("speech", "你好")]
+    assert [(p.kind, p.text) for p in b.parts] == [("beat", "掏出匕首"), ("speech", "你敢动试试")]
+    assert b.beats == ["掏出匕首"]
+    assert b.text == "你敢动试试"
+    assert b.display == "（掏出匕首）你敢动试试"
 
 
-def test_action_only_bubble():
+def test_legacy_action_marker_is_beat():
+    # 旧 {{ACTION}}…{{/ACTION}} 归入举动档
+    bubbles, _ = parse_turn_output("{{ACTION}}起身摔门{{/ACTION}}我走了")
+    (b,) = bubbles
+    assert [(p.kind, p.text) for p in b.parts] == [("beat", "起身摔门"), ("speech", "我走了")]
+    assert b.beats == ["起身摔门"]
+
+
+def test_gesture_only_bubble():
     bubbles, _ = parse_turn_output("*叹了口气*")
     (b,) = bubbles
-    assert [p.kind for p in b.parts] == ["action"]
-    assert b.text == ""                    # 无语言
+    assert [p.kind for p in b.parts] == ["gesture"]
+    assert b.text == ""                    # 无台词 → 角色 bot 不发
+    assert b.beats == []                   # 神态不播报 → 这条气泡聊天流里完全隐去
     assert b.display == "（叹了口气）"
 
 
-def test_action_in_middle():
+def test_gesture_in_middle():
     bubbles, _ = parse_turn_output("我请客*提裙子*了")
     (b,) = bubbles
     assert [(p.kind, p.text) for p in b.parts] == [
-        ("speech", "我请客"), ("action", "提裙子"), ("speech", "了")
+        ("speech", "我请客"), ("gesture", "提裙子"), ("speech", "了")
     ]
+    assert b.text == "我请客了"             # 台词拼接（神态剥离）
     assert b.display == "我请客（提裙子）了"
 
 
@@ -174,7 +190,7 @@ def test_reply_marker_with_action_and_self_tag():
     bubbles, _ = parse_turn_output("[阿福] {{REPLY:12}}*点头* 好", speaker="阿福")
     (b,) = bubbles
     assert b.reply_to == 12
-    assert [(p.kind, p.text) for p in b.parts] == [("action", "点头"), ("speech", "好")]
+    assert [(p.kind, p.text) for p in b.parts] == [("gesture", "点头"), ("speech", "好")]
 
 
 def test_echoed_handle_is_stripped():
