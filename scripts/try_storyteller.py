@@ -38,6 +38,7 @@ from aichatgroup.message.usher import Usher
 from aichatgroup.presets import load_preset
 from aichatgroup.runtime import Orchestrator
 from aichatgroup.runtime.log_relay import TelegramLogRelay
+from aichatgroup.runtime.players import PlayerRegistry
 from aichatgroup.story.storyteller import ModelStoryteller
 
 
@@ -116,6 +117,9 @@ def main() -> int:
     )
     storyteller = ModelStoryteller(gateway, settings.storyteller_model)
     usher = Usher(gateway, settings.usher_model)
+    # 玩家身份注册表（headless 无 store → 纯内存）+ 预设预登记
+    players = PlayerRegistry(agent_names={a.name for a in preset.agents})
+    players.seed((p.channel, p.external_id, p.name, p.persona) for p in preset.players)
     turns_cap = None if args.turns <= 0 else args.turns
 
     print("=" * 60)
@@ -129,7 +133,7 @@ def main() -> int:
     orch = Orchestrator(
         world=preset.world, agents=preset.agents, gateway=gateway,
         conductor=conductor, transport=transport,
-        storyteller=storyteller, usher=usher, room=room,
+        storyteller=storyteller, usher=usher, players=players, room=room,
         max_tokens=settings.max_tokens, turn_interval_s=0.0, idle_poll_s=0.0,
     )
 

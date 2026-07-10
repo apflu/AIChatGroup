@@ -29,7 +29,9 @@ import logging
 from typing import Awaitable, Callable
 
 from ..domain.conversation import USER_FORCED, ConversationEnd, ConversationIntent
+from ..domain.player import STRANGER_NAME
 from ..domain.types import Agent, RoomState, WorldBook
+from .players import PlayerRegistry
 from ..io.gateway import ModelGateway
 from ..io.persistence.store import Store
 from ..io.transport.base import InboundMessage, Transport
@@ -62,6 +64,7 @@ class Orchestrator:
         director: Conductor | None = None,   # 迁移期别名：等价 conductor
         storyteller: Storyteller | None = None,
         usher: Usher | None = None,
+        players: PlayerRegistry | None = None,
         end_detector: EndDetector | None = None,
         room: RoomState | None = None,
         store: Store | None = None,
@@ -85,6 +88,7 @@ class Orchestrator:
         self.transport = transport
         self.storyteller: Storyteller = storyteller or StubStoryteller()
         self.usher = usher
+        self.players = players
         self.detector = end_detector or EndDetector()
         self.store = store
         self.switch = switch or MasterSwitch()
@@ -186,16 +190,22 @@ class Orchestrator:
 
     def _handle_inbound(self, msg: InboundMessage) -> None:
         text = msg.text.strip()
-        if msg.is_command or text.split(" ", 1)[0] in _COMMANDS:
+        first = text.split(" ", 1)[0].lower()
+        if first == "/iam":
+            self._handle_iam(msg)              # 认领世界名，需 sender_id，故走这条特殊路
+            return
+        if msg.is_command or first in _COMMANDS:
             self._handle_command(text)
             return
+        # 解析世界身份：稳定 sender_id → Player 世界名（未注册=陌生人；无注册表=原显示名）
+        speaker = self._resolve_speaker(msg)
         # 若这条是回复某条消息，把被回复的 external_id 解析成内部 id
         reply_to = self._internal_id_for_external(msg.reply_to_external_id)
         # 去重 + 追加共享历史（store id 为权威 handle）
         mid = None
         if self.store is not None and self.room_id is not None:
             mid = self.store.append_message(
-                self.room_id, msg.speaker, msg.text,
+                self.room_id, speaker, msg.text,
                 external_id=msg.external_id, reply_to_id=reply_to,
                 conversation_id=self._conv_id,
             )
@@ -204,28 +214,54 @@ class Orchestrator:
                 return
         meta = {"external_id": msg.external_id} if msg.external_id else None
         self.room.append(
-            msg.speaker, msg.text, id=mid, author_kind="human",
+            speaker, msg.text, id=mid, author_kind="human",
             reply_to=reply_to, meta=meta,
         )
-        logger.info("摄入 [%s] %s", msg.speaker, msg.text)
-        log_event("ingest", speaker=msg.speaker, msg_id=mid, reply_to=reply_to)
-        self._triage_user_input(msg)
+        logger.info("摄入 [%s] %s", speaker, msg.text)
+        log_event("ingest", speaker=speaker, msg_id=mid, reply_to=reply_to)
+        self._triage_user_input(msg, speaker)
 
-    def _triage_user_input(self, msg: InboundMessage) -> None:
+    def _resolve_speaker(self, msg: InboundMessage) -> str:
+        """把发送者解析成世界内显示名。无注册表→原显示名（旧行为）；有表但未注册→陌生人。"""
+        if self.players is not None and msg.sender_id:
+            player = self.players.resolve(msg.channel or "telegram", msg.sender_id)
+            return player.name if player is not None else STRANGER_NAME
+        return msg.speaker
+
+    def _handle_iam(self, msg: InboundMessage) -> None:
+        """`/iam <世界名>`：把发送者的稳定 id 绑到一个世界名（含净化/软查重）。"""
+        if self.players is None or not msg.sender_id:
+            return
+        parts = msg.text.split(" ", 1)
+        name = parts[1].strip() if len(parts) > 1 else ""
+        channel = msg.channel or "telegram"
+        if not name:
+            log_event("player_iam_rejected", channel=channel, reason="空名字")
+            return
+        try:
+            player = self.players.register(channel, msg.sender_id, name)
+        except ValueError as exc:
+            log_event("player_iam_rejected", channel=channel, name=name, reason=str(exc))
+            return
+        logger.info("玩家认领世界名：%s", player.name)
+        log_event("player_register", name=player.name, channel=channel)
+
+    def _triage_user_input(self, msg: InboundMessage, speaker: str) -> None:
         """usher 台口分流：escalate → 置 user_forced，让 speak 循环提前收束当前会话。
 
         误判只赔延迟不赔丢失——absorb 的输入已进历史，下个边界 storyteller 一定看到。
+        speaker 是解析后的世界名（usher 也据世界身份判断，而非原始显示名）。
         """
         if self.usher is None:
             return
-        decision = self.usher.classify(self.room, msg.text, speaker=msg.speaker)
+        decision = self.usher.classify(self.room, msg.text, speaker=speaker)
         if decision.escalate:
             self._forced_end = ConversationEnd(
                 reason=USER_FORCED, summary_hook=msg.text, direction=decision.direction
             )
-            log_event("usher_escalate", speaker=msg.speaker, direction=decision.direction)
+            log_event("usher_escalate", speaker=speaker, direction=decision.direction)
         else:
-            log_event("usher_absorb", speaker=msg.speaker)
+            log_event("usher_absorb", speaker=speaker)
 
     # ---- 回复寻址辅助 --------------------------------------------------
     def _internal_id_for_external(self, external_id: str | None) -> int | None:

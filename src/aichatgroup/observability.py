@@ -31,6 +31,8 @@ _EVENT_LEVELS = {
     "schedule": "DEBUG",            # conductor picked a speaker, about to fire
     "usher_escalate": "DEBUG",      # user input needs the world to respond -> user_forced
     "usher_absorb": "DEBUG",        # user input absorbed (high volume)
+    "player_register": "DEBUG",     # a player claimed a world name via /iam
+    "player_iam_rejected": "DEBUG", # /iam rejected (bad name / collision)
     "ingest": "TRACE",              # ingested an external message
     "model_call": "TRACE",          # per-call output + cache counts (readable, for cache diagnosis)
     "model_raw": FIREHOSE,          # raw model output before parsing (filter-miss / prompt-effect)

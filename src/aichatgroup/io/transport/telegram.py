@@ -62,6 +62,7 @@ class TelegramTransport:
             return
         text = msg.text or ""
         sender = (msg.from_user.full_name if msg.from_user else None) or "匿名"
+        sender_id = str(msg.from_user.id) if msg.from_user else None   # 稳定用户 id → 世界身份锚点
         external_id = f"{msg.chat_id}:{msg.message_id}"
         is_command = text.strip().split(" ", 1)[0].lower() in self.command_prefixes
         reply = msg.reply_to_message
@@ -70,6 +71,7 @@ class TelegramTransport:
             InboundMessage(
                 speaker=sender, text=text, external_id=external_id,
                 is_command=is_command, reply_to_external_id=reply_ext,
+                sender_id=sender_id, channel="telegram",
             )
         )
 

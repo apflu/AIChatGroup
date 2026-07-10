@@ -36,6 +36,13 @@
       "bot_token_env": "TG_TOKEN_CHAR_3"
     }
   ],
+  "players": [
+    {
+      "name": "银发旅人",
+      "persona": "沉默寡言的雇佣兵，与管理员老陈有过一段旧怨。",
+      "telegram_id_env": "PL_ID_1"
+    }
+  ],
   "telegram": {
     "observer_token_env": "TG_TOKEN_OBSERVER",
     "chat_id_env": "TG_CHAT_ID"

@@ -57,6 +57,17 @@ CREATE TABLE IF NOT EXISTS summaries (
     objective_relations TEXT NOT NULL DEFAULT '',
     updated_ts         TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+-- 玩家身份（M2 player identity）：按世界（room_id）分区，键 (channel, external_id)。
+-- 锚在稳定外部 id（如 telegram from_user.id），不锚显示名。
+CREATE TABLE IF NOT EXISTS players (
+    room_id     INTEGER NOT NULL,
+    channel     TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    persona     TEXT NOT NULL DEFAULT '',
+    created_ts  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (room_id, channel, external_id)
+);
 """
 
 
@@ -219,6 +230,27 @@ class Store:
             "SELECT COUNT(*) AS n FROM conversations WHERE room_id = ?", (room_id,)
         ).fetchone()
         return int(row["n"])
+
+    # ---- players (M2 identity) ----------------------------------------
+    def upsert_player(
+        self, room_id: int, channel: str, external_id: str, name: str, persona: str = ""
+    ) -> None:
+        """按 (room_id, channel, external_id) 写入/更新一个玩家世界身份。"""
+        self.conn.execute(
+            "INSERT INTO players(room_id, channel, external_id, name, persona) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(room_id, channel, external_id) DO UPDATE SET "
+            "name = excluded.name, persona = excluded.persona",
+            (room_id, channel, external_id, name, persona),
+        )
+        self.conn.commit()
+
+    def list_players(self, room_id: int) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT channel, external_id, name, persona FROM players WHERE room_id = ?",
+            (room_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     # ---- memory --------------------------------------------------------
     def save_memory(self, room_id: int, agent_id: str, content: str) -> None:

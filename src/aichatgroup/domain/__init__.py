@@ -13,7 +13,8 @@ from .conversation import (
     ConversationEnd,
     ConversationIntent,
 )
-from .markers import BUBBLE_SEPARATOR, MEMORY_MARKER
+from .markers import BUBBLE_SEPARATOR, MEMORY_MARKER, USER_TAG
+from .player import STRANGER_NAME, Player, sanitize_player_name
 from .types import (
     Agent,
     ChatMessage,
@@ -30,6 +31,11 @@ from .types import (
 __all__ = [
     "BUBBLE_SEPARATOR",
     "MEMORY_MARKER",
+    "USER_TAG",
+    # player（人类参与者身份）
+    "Player",
+    "STRANGER_NAME",
+    "sanitize_player_name",
     # conversation（会话层契约）
     "ConversationIntent",
     "ConversationEnd",

@@ -32,6 +32,16 @@ class TelegramConfig:
 
 
 @dataclass
+class PresetPlayer:
+    """预设预登记的玩家：把稳定外部 id（直填 telegram_id 或 *_env 指向环境变量）绑到世界名+人设。"""
+
+    name: str
+    persona: str = ""
+    channel: str = "telegram"
+    external_id: str = ""          # 缺失（未配 id）则加载时留空，seed 时跳过
+
+
+@dataclass
 class RoomPreset:
     room_key: str
     world: WorldBook
@@ -39,6 +49,7 @@ class RoomPreset:
     seed_summary: str = ""
     seed_relations: str = ""
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
+    players: list[PresetPlayer] = field(default_factory=list)
     # 预设可自带 provider 定义（声明式；与全局 providers.json / env 合并）
     providers: list[ProviderSpec] = field(default_factory=list)
 
@@ -92,6 +103,16 @@ def load_preset(path: str | os.PathLike[str]) -> RoomPreset:
 
     providers = [ProviderSpec.from_dict(x) for x in data.get("providers", [])]
 
+    players: list[PresetPlayer] = []
+    for pl in data.get("players", []):
+        ext = _resolve_env(pl.get("telegram_id_env")) or str(pl.get("telegram_id", "")) or ""
+        players.append(PresetPlayer(
+            name=pl["name"],
+            persona=pl.get("persona", ""),
+            channel=pl.get("channel", "telegram"),
+            external_id=ext,
+        ))
+
     return RoomPreset(
         room_key=data.get("room_key", "default"),
         world=world,
@@ -99,5 +120,6 @@ def load_preset(path: str | os.PathLike[str]) -> RoomPreset:
         seed_summary=room_seed.get("long_term_summary", ""),
         seed_relations=room_seed.get("objective_relations", ""),
         telegram=telegram,
+        players=players,
         providers=providers,
     )

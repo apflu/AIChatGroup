@@ -32,6 +32,10 @@ class InboundMessage:
     is_command: bool = False
     # 若这条是「回复某条消息」，被回复消息的 external_id（如 telegram chat:msgid）
     reply_to_external_id: str | None = None
+    # 发送者的**稳定**外部 id（如 telegram from_user.id）+ 渠道，用于解析世界身份（PlayerRegistry）。
+    # speaker 是显示名（会变），sender_id 才是身份锚点。
+    sender_id: str | None = None
+    channel: str = ""
 
 
 @runtime_checkable

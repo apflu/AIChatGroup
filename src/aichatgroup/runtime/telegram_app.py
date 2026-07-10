@@ -17,6 +17,7 @@ from ..story.storyteller import ModelStoryteller
 from ..io.transport import TelegramTransport
 from .log_relay import TelegramLogRelay
 from .orchestrator import Orchestrator
+from .players import PlayerRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,10 @@ def build_orchestrator(
     if store.load_summary(room_id) == ("", "") and (preset.seed_summary or preset.seed_relations):
         store.save_summary(room_id, preset.seed_summary, preset.seed_relations)
 
+    # 玩家身份注册表（按本世界 room_id 分区）+ 预设预登记
+    players = PlayerRegistry(store, room_id, agent_names={a.name for a in preset.agents})
+    players.seed((p.channel, p.external_id, p.name, p.persona) for p in preset.players)
+
     agent_tokens = {aid: at.bot_token for aid, at in tg.agents.items() if at.bot_token}
     transport = TelegramTransport(tg.observer_token, tg.chat_id, agent_tokens)
 
@@ -57,6 +62,7 @@ def build_orchestrator(
         transport=transport,
         storyteller=storyteller,
         usher=usher,
+        players=players,
         store=store,
         room_key=preset.room_key,
         max_tokens=settings.max_tokens,

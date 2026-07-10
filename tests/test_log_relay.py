@@ -28,7 +28,7 @@ def test_relay_forwards_debug_events_not_trace_not_plain_logs():
         await relay.attach(level="DEBUG")
         try:
             log_event("usher_escalate", speaker="用户", direction="disrupt")  # DEBUG → 转发
-            log_event("usher_absorb", speaker="用户")                         # TRACE → 不转发
+            log_event("ingest", speaker="用户", msg_id=1)                     # TRACE → 不转发
             logger.info("这是一条普通模块日志，没有 event")                    # 无 event → 不转发
             await _wait_for(lambda: len(t.system_sent) >= 1)
             # 再多让几拍，确认 absorb / 普通日志没有偷偷进来

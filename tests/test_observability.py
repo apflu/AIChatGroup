@@ -47,13 +47,15 @@ def test_log_event_binds_event_and_fields_and_omits_none():
     assert "cost" not in rec["extra"]        # None 省略
 
 
-def test_event_levels_absorb_trace_escalate_debug():
-    with _Capture() as cap:
-        log_event("usher_absorb", speaker="用户")
-        log_event("usher_escalate", speaker="用户", direction="disrupt")
+def test_event_levels_span_the_tiers():
+    with _Capture(level="FIREHOSE") as cap:
+        log_event("usher_escalate", speaker="用户", direction="disrupt")  # DEBUG
+        log_event("ingest", speaker="用户", msg_id=1)                     # TRACE
+        log_event("model_raw", source="usher", raw="x")                   # FIREHOSE
     by_event = {e: lvl for e, lvl, _ in cap.events()}
-    assert by_event["usher_absorb"] == "TRACE"
     assert by_event["usher_escalate"] == "DEBUG"
+    assert by_event["ingest"] == "TRACE"
+    assert by_event["model_raw"] == "FIREHOSE"
 
 
 def test_render_is_plain_key_value_no_symbols():

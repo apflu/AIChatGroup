@@ -30,6 +30,7 @@ from .domain import (
     ConversationIntent,
     Message,
     PacingConfig,
+    Player,
     RoomState,
     TurnResult,
     Usage,
@@ -52,7 +53,7 @@ from .io.gateway import (
 from .io.persistence import Store
 from .presets import RoomPreset, load_preset
 from .message.prompt import build_prompt
-from .runtime import MasterSwitch, Orchestrator
+from .runtime import MasterSwitch, Orchestrator, PlayerRegistry
 from .io.transport import InboundMessage, InMemoryTransport, Transport
 
 __version__ = "0.0.1"
@@ -108,6 +109,8 @@ __all__ = [
     "Store",
     "Orchestrator",
     "MasterSwitch",
+    "Player",
+    "PlayerRegistry",
     "RoomPreset",
     "load_preset",
     "Settings",

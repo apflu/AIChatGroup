@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .markers import USER_TAG
 from ..prompts import render as render_prompt
 
 
@@ -111,14 +112,16 @@ class Message:
         return "".join(p.text for p in self.parts if p.kind == "speech")
 
     def render(self, reply_note: str = "") -> str:
-        """序列化进历史：`⟦id⟧ [speaker] （回…）（动作）语言`。
+        """序列化进历史：`⟦id⟧ <user> [speaker] （回…）（动作）语言`。
 
-        `⟦id⟧` 是稳定 handle，模型据此用 `{{REPLY:id}}` 回复某条。reply_note 由 builder 传入
-        （被回复消息的定长引用），render 自身不查别的消息。id/speaker/parts 跨 agent 相同、
-        跨轮稳定 → 前缀逐字节一致，保共享缓存不变式。
+        `⟦id⟧` 是稳定 handle，模型据此用 `{{REPLY:id}}` 回复某条。人类玩家的行在名字**前**加
+        `<user>` 种类 tag（AI 角色行不加、保持纯净）——标出"这是人不是 AI"，且刺目难伪造/难被回显。
+        reply_note 由 builder 传入（被回复消息的定长引用），render 自身不查别的消息。
+        id/speaker/parts/author_kind 跨 agent 相同、跨轮稳定 → 前缀逐字节一致，保共享缓存不变式。
         """
         note = f"{reply_note} " if reply_note else ""
-        return f"⟦{self.id}⟧ [{self.speaker}] {note}{render_parts(self.parts)}"
+        tag = f"{USER_TAG} " if self.author_kind == "human" else ""
+        return f"⟦{self.id}⟧ {tag}[{self.speaker}] {note}{render_parts(self.parts)}"
 
 
 # 迁移期别名：保住公共导出与旧引用，一个周期后可移除。
