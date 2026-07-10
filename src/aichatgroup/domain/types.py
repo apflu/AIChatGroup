@@ -69,18 +69,24 @@ class Agent:
 class ContentPart:
     """消息内容的一段。动作/语言分离就落在这（未来可加 sticker/tool_* kind）。"""
 
-    kind: str          # "speech" | "action" | "sticker"
+    kind: str          # "speech" | "gesture"(神态) | "beat"(举动) | "action"(旧别名) | "sticker"
     text: str
 
 
+# 动作类 kind：喂给模型的历史里一律渲成中文括号（形态与旧 "action" 一致 → 缓存不变）。
+# 神态/举动的分野只在**聊天流投递**时体现（gesture 隐、beat 交旁白），历史层不区分。
+_ACTION_KINDS = ("gesture", "beat", "action")
+
+
 def render_parts(parts: "list[ContentPart]") -> str:
-    """把 parts 渲染成给模型看/往外发的文本：动作用中文括号、贴纸标注、语言裸文本。
+    """把 parts 渲染成给模型看/入历史的文本：动作用中文括号、贴纸标注、语言裸文本。
 
     纯 speech 时输出 == 语言原文 → 与旧 `text` 逐字节一致，保共享缓存前缀不变式。
+    注意这是**历史/上下文**渲染；发到聊天流的内容由 orchestrator 按 kind 分流，另行处理。
     """
     out = []
     for p in parts:
-        if p.kind == "action":
+        if p.kind in _ACTION_KINDS:
             out.append(f"（{p.text}）")
         elif p.kind == "sticker":
             out.append(f"[贴纸:{p.text}]")

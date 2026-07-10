@@ -39,12 +39,18 @@ class ParsedBubble:
 
     @property
     def text(self) -> str:
-        """仅语言段拼接（供 pacing 之外的用途 / 断言）。"""
+        """仅台词段拼接——这是**角色 bot 实际发到聊天流**的内容（动作已剥离）。"""
         return "".join(p.text for p in self.parts if p.kind == "speech")
 
     @property
+    def beats(self) -> list[str]:
+        """有后果的举动段——托管给旁白（bot 0）第三人称播报。神态(gesture)不在此、直接隐去。"""
+        return [p.text for p in self.parts if p.kind == "beat"]
+
+    @property
     def display(self) -> str:
-        """往外发 / 入历史的文本：动作 + 语言按序渲染。"""
+        """入历史 / 持久化的完整文本：动作(神态+举动) + 台词按序渲染。
+        喂给模型的上下文用这个（形态不变、保共享缓存前缀不变式）；聊天流投递另按 kind 分流。"""
         return render_parts(self.parts)
 
 def _marker_inner(marker: str) -> str:
@@ -137,12 +143,20 @@ def _strip_self_tag(bubble: str, name: str) -> str:
     return bubble
 
 
-# 模型误回显历史里的 ⟦id⟧ 句柄（那是给它看的，不该写进台词），从气泡首剥掉。
-_HANDLE_ECHO_RE = re.compile(r"^\s*⟦\s*\d+\s*⟧\s*")
-# 保险丝：模型若回显人类行的 `<user>` 种类 tag（正常不该，AI 行本就不带），从气泡首剥掉。
-_USER_TAG_ECHO_RE = re.compile(r"^\s*<\s*user\s*>\s*", re.IGNORECASE)
-# 回复标记：气泡首 `{{REPLY:37}}` → reply_to=37。
+# 模型误回显历史里的 ⟦id⟧ 句柄（那是给它看的，不该写进台词）。
+# 两种情形要分开：
+#  - **气泡首**的裸句柄：模型模仿历史行 `⟦id⟧ [name]` 的书式，是格式回显、非引用 → 剥掉、不当回复。
+#  - **正文中**的句柄（如 `朝⟦4⟧那边`）：模型想指向某条消息，是引用意图 → 剥掉防泄漏，
+#    并把首个当作回复兜底（模型没走 {{REPLY}} 时的救济）。
+_HANDLE_ECHO_RE = re.compile(r"^\s*⟦\s*\d+\s*⟧\s*")     # 行首格式回显
+_HANDLE_ANY_RE = re.compile(r"⟦\s*(\d+)\s*⟧")           # 任意位置（正文引用）
+# 保险丝：模型若回显人类行的 `<user>` 种类 tag（正常不该，AI 行本就不带）。
+# 和 ⟦id⟧ 同属"AI 绝不该产出"的内部 tag，全局剥掉防泄漏（含首部误回显 `<user> [名字] …`）。
+_USER_TAG_ANY_RE = re.compile(r"<\s*user\s*>", re.IGNORECASE)
+# 回复标记：气泡首 `{{REPLY:37}}` → reply_to=37（契约位置）。
 _REPLY_RE = re.compile(r"^\s*\{\{\s*REPLY\s*:\s*(\d+)\s*\}\}\s*", re.IGNORECASE)
+# 任意位置的 REPLY（正文里残留的属格式错乱，防泄漏剥掉）。
+_REPLY_ANY_RE = re.compile(r"\{\{\s*REPLY\s*:\s*\d+\s*\}\}", re.IGNORECASE)
 
 
 def _extract_reply(bubble: str) -> tuple[str, int | None]:
@@ -152,17 +166,32 @@ def _extract_reply(bubble: str) -> tuple[str, int | None]:
     return bubble, None
 
 
-# 动作跨度：`{{ACTION}}…{{/ACTION}}`（容忍大小写/空白）或 RP 惯用的单星号 `*…*`。
-# 其余为语言。两者都容忍，内部统一归到 ContentPart。
+def _scrub_inline_markers(bubble: str) -> tuple[str, int | None]:
+    """剥掉正文里残留的内部标记（⟦id⟧、非首部的 {{REPLY:id}}）防泄漏。
+    返回 (clean, 首个句柄 id 或 None)——首个句柄供调用方在没有显式 {{REPLY}} 时兜底成回复目标。"""
+    m = _HANDLE_ANY_RE.search(bubble)
+    first = int(m.group(1)) if m else None
+    cleaned = _HANDLE_ANY_RE.sub("", bubble)
+    cleaned = _REPLY_ANY_RE.sub("", cleaned)  # 正文中间的 {{REPLY:id}}（契约在首部）
+    cleaned = re.sub(r"  +", " ", cleaned)    # 合并剥离后残留的空隙（不碰 CJK 无空格情形）
+    return cleaned, first
+
+
+# 动作分两档，解析层就区分 kind、决定投递去向：
+#  - **神态**（gesture）：RP 惯用单星号 `*…*`。廉价、装饰性，聊天流里**直接隐去**（读者自行体会）。
+#  - **举动**（beat）：`{{ACT:掏出匕首}}`（冒号式）或旧 `{{ACTION}}…{{/ACTION}}`。有后果、别人必须知道，
+#    托管给旁白（bot 0）第三人称播报。漏标成星号的举动会被当神态隐掉——失败温和（台词仍在）。
+# 其余为台词(speech)。三者都容忍，内部统一归到 ContentPart。
 _ACTION_RE = re.compile(
-    r"\{\{\s*ACTION\s*\}\}(.*?)\{\{\s*/\s*ACTION\s*\}\}"   # {{ACTION}}…{{/ACTION}}
-    r"|\*([^*\n]+?)\*",                                     # *…*（单星号、不跨行）
+    r"\{\{\s*ACT\s*:\s*(?P<beat1>[^{}]+?)\s*\}\}"                     # {{ACT:掏出匕首}}
+    r"|\{\{\s*ACTION\s*\}\}(?P<beat2>.*?)\{\{\s*/\s*ACTION\s*\}\}"    # {{ACTION}}…{{/ACTION}}（旧式）
+    r"|\*(?P<gesture>[^*\n]+?)\*",                                     # *神态*（单星号、不跨行）
     re.IGNORECASE | re.DOTALL,
 )
 
 
 def _extract_parts(text: str) -> list[ContentPart]:
-    """把一条气泡文本切成有序的 动作/语言 段。无动作标记则整段为一个 speech。"""
+    """把一条气泡文本切成有序的 神态/举动/台词 段。无动作标记则整段为一个 speech。"""
     parts: list[ContentPart] = []
     pos = 0
     for m in _ACTION_RE.finditer(text):
@@ -170,10 +199,13 @@ def _extract_parts(text: str) -> list[ContentPart]:
             seg = text[pos:m.start()].strip()
             if seg:
                 parts.append(ContentPart(kind="speech", text=seg))
-        action = (m.group(1) if m.group(1) is not None else m.group(2)) or ""
-        action = action.strip()
-        if action:
-            parts.append(ContentPart(kind="action", text=action))
+        if m.group("gesture") is not None:
+            kind, body = "gesture", m.group("gesture")
+        else:
+            kind, body = "beat", (m.group("beat1") or m.group("beat2") or "")
+        body = body.strip()
+        if body:
+            parts.append(ContentPart(kind=kind, text=body))
         pos = m.end()
     tail = text[pos:].strip()
     if tail:
@@ -222,11 +254,14 @@ def parse_turn_output(
 
     bubbles: list[ParsedBubble] = []
     for raw, hint in zip(raw_bubbles, hints):
-        b = _HANDLE_ECHO_RE.sub("", raw, count=1)      # 剥误回显的 ⟦id⟧
-        b = _USER_TAG_ECHO_RE.sub("", b, count=1)      # 剥误回显的 <user>
+        b = _HANDLE_ECHO_RE.sub("", raw, count=1)      # 剥行首格式回显的 ⟦id⟧（非引用）
+        b = _USER_TAG_ANY_RE.sub("", b)                # 全局剥误回显的 <user>
         if speaker:
             b = _strip_self_tag(b, speaker)
-        b, reply_id = _extract_reply(b.strip())        # 抽 {{REPLY:id}}
+        b, reply_id = _extract_reply(b.strip())        # 抽显式 {{REPLY:id}}（优先）
+        b, inline_reply = _scrub_inline_markers(b)     # 剥正文残留 ⟦id⟧/{{REPLY}}，首个句柄作回复兜底
+        if reply_id is None:
+            reply_id = inline_reply
         b = b.strip()
         if not b:
             continue

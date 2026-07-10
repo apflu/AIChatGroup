@@ -15,7 +15,7 @@
       "model_id": "clwd::claude-sonnet-5",
       "base_prompt": "你是酒馆常客。",
       "character_card": "活泼、话痨、爱起哄。",
-      "pacing": { "base_pause_s": 1, "per_char_s": 0.1, "explicit_scale": 0.9 },
+      "pacing": { "base_pause_s": 1, "per_char_s": 0.33, "explicit_scale": 0.9 },
       "bot_token_env": "TG_TOKEN_CHAR_1"
     },
     {
@@ -24,7 +24,7 @@
       "model_id": "clwd::claude-opus-4-6",
       "base_prompt": "你是退役水手。",
       "character_card": "沉稳、爱讲道理、偶尔毒舌。",
-      "pacing": { "base_pause_s": 0.8, "per_char_s": 0.15, "explicit_scale": 1.5 },
+      "pacing": { "base_pause_s": 0.8, "per_char_s": 0.25, "explicit_scale": 1.5 },
       "bot_token_env": "TG_TOKEN_CHAR_2"
     },
     {

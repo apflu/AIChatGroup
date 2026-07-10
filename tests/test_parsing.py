@@ -178,10 +178,36 @@ def test_reply_marker_with_action_and_self_tag():
 
 
 def test_echoed_handle_is_stripped():
-    # 模型误把历史里的 ⟦37⟧ 句柄写进台词 → 剥掉，且不当成回复
+    # 模型误把历史里的 ⟦37⟧ 句柄写进【气泡首】→ 是格式回显、剥掉、且不当成回复
     bubbles, _ = parse_turn_output("⟦37⟧ 你好", speaker="小诗")
     assert texts(bubbles) == ["你好"]
     assert bubbles[0].reply_to is None
+
+
+def test_inline_handle_is_stripped_and_becomes_reply():
+    # 正文中出现的 ⟦4⟧（如 "朝⟦4⟧那边"）是引用意图 → 剥掉防泄漏，首个当回复兜底
+    bubbles, _ = parse_turn_output("*朝⟦4⟧那边扬了扬下巴* 问谁呀？", speaker="阿福")
+    (b,) = bubbles
+    assert "⟦" not in b.display and "4" not in b.display
+    assert b.display == "（朝那边扬了扬下巴）问谁呀？"
+    assert b.reply_to == 4
+
+
+def test_inline_handle_leaves_no_double_space_in_latin():
+    # 拉丁文本里 ⟦id⟧ 两侧带空格，剥后不留双空格、也不粘连单词
+    bubbles, _ = parse_turn_output("hey ⟦7⟧ you there")
+    (b,) = bubbles
+    assert b.display == "hey you there"
+    assert b.reply_to == 7
+
+
+def test_explicit_reply_wins_over_inline_handle():
+    # 同时有显式 {{REPLY:9}} 与正文 ⟦4⟧ → 显式优先，句柄仍被剥掉
+    bubbles, _ = parse_turn_output("{{REPLY:9}}看⟦4⟧那边", speaker="阿福")
+    (b,) = bubbles
+    assert b.reply_to == 9
+    assert "⟦" not in b.display
+    assert b.text == "看那边"
 
 
 # ---- fuzz / property：乱序穿插标记不崩、语义稳定 ----------------------
@@ -192,6 +218,7 @@ def test_fuzz_marker_soup_never_crashes():
         "{{SEPARATOR}}", "{{SEPARATOR:2}}", "{{MEMORY}}", "{{/MEMORY}}",
         "*动作*", "{{ACTION}}x{{/ACTION}}", "[小诗]", "小诗：", "台词",
         '{"a":1}', "```json", "```", "</MEMORY>", "\n", "甲乙丙",
+        "⟦4⟧", "⟦12⟧", "{{REPLY:3}}", "<user>",
     ]
     rng = random.Random(20260707)
     for _ in range(400):
@@ -201,6 +228,8 @@ def test_fuzz_marker_soup_never_crashes():
         assert len(bubbles) <= 3
         assert all(b.parts for b in bubbles)
         assert mem is None or isinstance(mem, dict)
-        # 标记不应泄进最终 display
+        # 标记与内部句柄都不应泄进最终 display
         for b in bubbles:
             assert "{{SEPARATOR" not in b.display and "{{MEMORY" not in b.display
+            assert "⟦" not in b.display and "⟧" not in b.display
+            assert "{{REPLY" not in b.display and "<user>" not in b.display
