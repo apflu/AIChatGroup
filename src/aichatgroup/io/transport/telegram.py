@@ -21,7 +21,7 @@ import asyncio
 import logging
 
 from ...domain.types import Agent
-from .base import InboundMessage
+from .base import BotProfile, InboundMessage
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +33,13 @@ class TelegramTransport:
         chat_id: str | int,
         agent_tokens: dict[str, str],
         *,
+        agent_profiles: dict[str, BotProfile] | None = None,
         command_prefixes: tuple[str, ...] = ("/pause", "/resume", "/status", "/stop"),
     ) -> None:
         self.observer_token = observer_token
         self.chat_id = int(chat_id)
         self.agent_tokens = agent_tokens
+        self.agent_profiles = agent_profiles or {}   # agent_id → 展示身份（名字/头像），启动时同步
         self.command_prefixes = command_prefixes
         self._inbound: asyncio.Queue[InboundMessage] = asyncio.Queue()
 
@@ -83,6 +85,40 @@ class TelegramTransport:
         await self._observer_app.start()
         await self._observer_app.updater.start_polling(drop_pending_updates=True)
         logger.info("TelegramTransport 已启动，观察群 chat_id=%s", self.chat_id)
+        await self._sync_bot_profiles()
+
+    async def _sync_bot_profiles(self) -> None:
+        """启动时把每个角色 bot 的平台展示身份对齐到角色名（+ 预留头像）。"""
+        for aid, profile in self.agent_profiles.items():
+            bot = self._agent_bots.get(aid)
+            if bot is None:
+                continue
+            await self._set_bot_name(bot, profile.name)
+            await self.set_bot_avatar(aid, profile.avatar)   # nullable：None 时 no-op
+
+    async def _set_bot_name(self, bot, name: str) -> None:
+        """把角色 bot 的 telegram 展示名同步成角色名。
+        幂等——仅当前名不同才改，避开 setMyName 的改名频率限制；失败（限流/网络）不拖垮启动。"""
+        try:
+            current = await bot.get_my_name()
+            if current is not None and current.name == name:
+                return
+            await bot.set_my_name(name=name)
+            logger.info("角色 bot 展示名已更新为「%s」", name)
+        except Exception as exc:  # pragma: no cover - 网络/改名限流
+            logger.warning("设置 bot 展示名「%s」失败（可能触发改名频率限制）：%s", name, exc)
+
+    async def set_bot_avatar(self, agent_id: str, avatar: str | None) -> None:
+        """【预留 · nullable】设置角色 bot 头像。avatar 为 None 时不做任何事。
+
+        Telegram Bot API 目前**不支持**编程设置 bot 头像（只能经 BotFather 手动），
+        故即便传非 None 也仅记录、不生效；等平台支持或换 transport 时在此接实现。"""
+        if avatar is None:
+            return
+        logger.info(
+            "bot 头像设置暂不支持（Telegram Bot API 限制），已忽略 %s 的 avatar=%s",
+            agent_id, avatar,
+        )
 
     async def stop(self) -> None:
         try:

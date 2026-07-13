@@ -66,9 +66,13 @@ def _build_telegram(preset):
     if not tg.observer_token or not tg.chat_id:
         print("预设缺 observer token / chat_id（检查 .env 与 *_env 配置）。", file=sys.stderr)
         return None
-    from aichatgroup.io.transport import TelegramTransport
+    from aichatgroup.io.transport import BotProfile, TelegramTransport
     agent_tokens = {aid: at.bot_token for aid, at in tg.agents.items() if at.bot_token}
-    return TelegramTransport(tg.observer_token, tg.chat_id, agent_tokens)
+    # 启动时把角色名同步成 bot 展示名（头像预留 None，Bot API 暂不支持编程设置）
+    agent_profiles = {a.id: BotProfile(name=a.name) for a in preset.agents}
+    return TelegramTransport(
+        tg.observer_token, tg.chat_id, agent_tokens, agent_profiles=agent_profiles
+    )
 
 
 def main() -> int:

@@ -6,8 +6,9 @@
            并附一个方向标签（advance / disrupt / probe / swerve = 推进 / 捣乱 / 试探 / 拐弯）。
 
 判据是「世界要不要回应」，**不是「激不激进」**——破坏设定的话哪怕语气平静也要 escalate。
-关键性质：**误判只赔延迟、不赔丢失**（被 absorb 的输入照样进历史，下个边界一定被 storyteller 看到），
-所以默认**调保守**：模型异常 / 输出无法解析 → 一律 absorb。
+误判代价**不对称**（曾写作"误判只赔延迟、不赔丢失"，那只在非 canon 输入上成立）：非 canon 误判赔延迟；
+**canon 误判赔污染复利**——absorb 的破坏会被后续 beat 的 AI 放大成既成事实（详见 M2.md §9 的 §5×§9 耦合）。
+默认**调保守**（模型异常 / 输出无法解析 → 一律 absorb）——回落层这个残余入口本期搁置、不动机制。
 
 设计详见 docs/milestone/M2.md §5。它坐在 message 平面、贴着 conductor：产出既可喂 conductor 的会话内
 路由，又可喂 storyteller 的边界升级。M2-B 只做「判 + 出决策」，把 `user_forced` 接进会话状态机是 A 的事。

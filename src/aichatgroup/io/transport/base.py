@@ -38,6 +38,18 @@ class InboundMessage:
     channel: str = ""
 
 
+@dataclass
+class BotProfile:
+    """角色 bot 的展示身份，session 启动时由 transport 同步到平台。
+
+    Telegram：`name` → `setMyName`；`avatar` 预留——Bot API 目前不支持编程设置 bot 头像
+    （只能 BotFather 手动），故 avatar 是 **nullable 占位**，非 None 时也仅记录、不生效。
+    """
+
+    name: str
+    avatar: str | None = None   # 头像文件路径 / URL；平台支持后再接（见 TelegramTransport.set_bot_avatar）
+
+
 @runtime_checkable
 class Transport(Protocol):
     """收发消息的薄适配层。实现方负责把外部事件转成 InboundMessage。"""

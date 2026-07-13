@@ -14,7 +14,7 @@ from ..io.gateway import build_gateway
 from ..io.persistence import Store
 from ..presets import load_preset
 from ..story.storyteller import ModelStoryteller
-from ..io.transport import TelegramTransport
+from ..io.transport import BotProfile, TelegramTransport
 from .log_relay import TelegramLogRelay
 from .orchestrator import Orchestrator
 from .players import PlayerRegistry
@@ -52,7 +52,11 @@ def build_orchestrator(
     players.seed((p.channel, p.external_id, p.name, p.persona) for p in preset.players)
 
     agent_tokens = {aid: at.bot_token for aid, at in tg.agents.items() if at.bot_token}
-    transport = TelegramTransport(tg.observer_token, tg.chat_id, agent_tokens)
+    # 启动时把角色名同步成 bot 展示名（头像预留 None，Bot API 暂不支持编程设置）
+    agent_profiles = {a.id: BotProfile(name=a.name) for a in preset.agents}
+    transport = TelegramTransport(
+        tg.observer_token, tg.chat_id, agent_tokens, agent_profiles=agent_profiles
+    )
 
     orch = Orchestrator(
         world=preset.world,

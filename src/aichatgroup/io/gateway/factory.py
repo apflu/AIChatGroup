@@ -29,7 +29,7 @@ from .router import (
 
 def _make_gateway(kind: str, api_key: str | None, base_url: str | None):
     if kind == "anthropic":
-        return AnthropicGateway(api_key=api_key)
+        return AnthropicGateway(api_key=api_key, base_url=base_url)
     if kind == "gemini":
         return GeminiGateway(api_key=api_key)
     # openai 及所有兼容端点
