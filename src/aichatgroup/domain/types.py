@@ -52,6 +52,9 @@ class Agent:
     # RisuAI 式层级：全局 base_prompt → 角色卡人设/示例对话
     base_prompt: str = ""
     character_card: str = ""
+    # M3 知识隔离：只有本角色知道的世界秘密。走**不缓存尾部**注入（零缓存回归），
+    # 是"不同角色知道不同的事"最省事的落点——不劈开第 0 层共享世界书缓存。
+    secret_knowledge: str = ""
     # 与性格接驳的推断配置（目前只有停顿；后续可扩展更多可调 factor）
     pacing: "PacingConfig" = field(default_factory=lambda: PacingConfig())
 
@@ -103,6 +106,11 @@ class Message:
     既是持久主键、也是模型回复寻址用的 handle。speaker 是显示名（角色名或人类 PL 名）。
     parts 承载动作/语言分离；reply_to 指向另一条 Message.id；meta 是开放逃生舱
     （external_id / turn / pause_before / model / ts …）。
+
+    可见性（M3 知识隔离 + usher 清洗共用的接缝）：
+    - redacted：世界否决/清洗——对**所有** agent 的模型上下文不可见（软删除，行仍留库供审计）。
+    - visible_to：None=全体可见；否则仅这些 agent_id 可见（M3 一般情形，默认 None 时完全惰性）。
+    两者都由 `is_visible_to` 谓词统一裁决，组装历史（builder）时据此过滤。
     """
 
     id: int
@@ -111,11 +119,25 @@ class Message:
     author_kind: str = "agent"          # agent | human | system
     reply_to: int | None = None
     meta: dict = field(default_factory=dict)
+    redacted: bool = False              # 世界否决/清洗：对谁都不可见（软删除）
+    visible_to: "frozenset[str] | None" = None   # M3 预留：None=全体；否则仅这些 agent_id
 
     @property
     def text(self) -> str:
         """便利属性：拼接全部 speech 段（供日志 / TTS / 兼容）。不含动作。"""
         return "".join(p.text for p in self.parts if p.kind == "speech")
+
+    def is_visible_to(self, agent_id: str) -> bool:
+        """该消息组装进指定 agent 历史时是否可见（清洗 + 知识隔离共用的裁决）。
+
+        redacted（世界否决/清洗）→ 对谁都不可见；visible_to 为子集且不含该 agent → 不可见；
+        否则可见。清洗是"对谁都不可见"的退化情形，M3 隔离是"只对子集可见"的一般情形。
+        """
+        if self.redacted:
+            return False
+        if self.visible_to is not None and agent_id not in self.visible_to:
+            return False
+        return True
 
     def render(self, reply_note: str = "") -> str:
         """序列化进历史：`⟦id⟧ <user> [speaker] （回…）（动作）语言`。

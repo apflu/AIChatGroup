@@ -40,8 +40,13 @@ def _cache(text: str) -> SystemBlock:
 
 
 def build_tail(agent: Agent, memory_text: str, conductor_instruction: str) -> str:
-    """第 3 层尾部：人设 + 私有记忆快照 + conductor 指令（会话意图 hook）+ 输出契约。"""
+    """第 3 层尾部：人设 + 角色独知世界秘密 + 私有记忆快照 + conductor 指令 + 输出契约。
+
+    per-agent 的知识隔离（角色秘密）落在这——尾部本就每 agent 不同且不缓存，注入零缓存回归。
+    """
     parts = [load_prompt("tail_header"), agent.render_persona()]
+    if agent.secret_knowledge.strip():
+        parts.append(render_prompt("tail_knowledge", knowledge=agent.secret_knowledge.strip()))
     if memory_text.strip():
         parts.append(render_prompt("tail_memory", memory=memory_text.strip()))
     if conductor_instruction.strip():
@@ -66,6 +71,9 @@ def _reply_note(reply_to, window_map: dict, resolve) -> str:
         target = resolve(reply_to)
     if target is None:
         return f"（回⟦{reply_to}⟧）"
+    if getattr(target, "redacted", False):
+        # 目标已被清洗：只保留回复指向，绝不漏其内容片段（否则隐藏内容会从幸存回复里回流上下文）
+        return f"（回⟦{reply_to}⟧）"
     snippet = (target.text or render_parts(target.parts)).strip()[:_QUOTE_LEN]
     return f"（回⟦{reply_to}⟧「{snippet}…」）" if snippet else f"（回⟦{reply_to}⟧）"
 
@@ -87,14 +95,18 @@ def build_prompt(
         _cache(room.render_layer1()),    # breakpoint 2
     ]
 
+    # 可见性过滤（清洗 + M3 知识隔离的唯一接缝）：只组装对本 agent 可见的历史。
+    # redacted 对谁都不可见 → 各 agent 的可见历史仍逐字节一致（只是变短），共享同一缓存车道；
+    # visible_to（M3 一般情形）才会 per-agent 分叉车道，默认 None 时此行为完全惰性。
     window_map = {m.id: m for m in room.history}
+    visible = [m for m in room.history if m.is_visible_to(agent.id)]
     messages: list[Message] = []
-    last = len(room.history) - 1
-    for i, msg in enumerate(room.history):
+    last = len(visible) - 1
+    for i, msg in enumerate(visible):
         note = _reply_note(msg.reply_to, window_map, resolve)
         rendered = msg.render(reply_note=note)
         if i == last:
-            # 滚动 breakpoint 3：cache_control 挂在最后一条历史消息上
+            # 滚动 breakpoint 3：cache_control 挂在最后一条**可见**历史消息上
             messages.append({"role": "user", "content": [_cache(rendered)]})
         else:
             messages.append({"role": "user", "content": rendered})

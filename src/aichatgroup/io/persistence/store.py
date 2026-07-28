@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS messages (
     text        TEXT NOT NULL,
     reply_to_id INTEGER,
     conversation_id INTEGER,
+    redacted    INTEGER NOT NULL DEFAULT 0,
     ts          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 -- 会话（M2）：storyteller 播种的一段对话；消息挂 conversation_id。
@@ -86,6 +87,10 @@ class Store:
             self.conn.execute("ALTER TABLE messages ADD COLUMN reply_to_id INTEGER")
         if "conversation_id" not in cols:
             self.conn.execute("ALTER TABLE messages ADD COLUMN conversation_id INTEGER")
+        if "redacted" not in cols:
+            self.conn.execute(
+                "ALTER TABLE messages ADD COLUMN redacted INTEGER NOT NULL DEFAULT 0"
+            )
 
     def close(self) -> None:
         self.conn.close()
@@ -140,10 +145,13 @@ class Store:
             parts=[ContentPart(kind="speech", text=r["text"])],
             reply_to=r["reply_to_id"],
             meta=meta,
+            redacted=bool(r["redacted"]),
         )
 
     def load_history(self, room_id: int, limit: int | None = None) -> list[Message]:
-        sql = ("SELECT id, speaker, text, external_id, reply_to_id "
+        # 不在 SQL 里过滤 redacted——保留行供审计 + get_message 回复解析；可见性过滤只在 builder 做，
+        # 让内存/DB 两条路一致（redacted 标记随 Message 下发，builder 据 is_visible_to 裁决）。
+        sql = ("SELECT id, speaker, text, external_id, reply_to_id, redacted "
                "FROM messages WHERE room_id = ? ORDER BY id")
         rows = self.conn.execute(sql, (room_id,)).fetchall()
         msgs = [self._row_to_message(r) for r in rows]
@@ -152,11 +160,23 @@ class Store:
     def get_message(self, room_id: int, message_id: int) -> Message | None:
         """按内部 id 取一条消息（超窗回复重注入用；可能已被 compaction 删除→None）。"""
         r = self.conn.execute(
-            "SELECT id, speaker, text, external_id, reply_to_id "
+            "SELECT id, speaker, text, external_id, reply_to_id, redacted "
             "FROM messages WHERE room_id = ? AND id = ?",
             (room_id, message_id),
         ).fetchone()
         return self._row_to_message(r) if r is not None else None
+
+    def redact_message(self, room_id: int, message_id: int) -> None:
+        """把一条消息标记为已清洗（软删除）：从此对模型上下文不可见，行仍留库供审计。
+
+        usher 在"世界已回应违规输入之后"调用，斩断后续 beat 把该输入放大成既成事实的链。
+        仅上下文：不删 DB 行、不动 Telegram 消息（世界剧情内的抗拒回应即是可见纠正）。
+        """
+        self.conn.execute(
+            "UPDATE messages SET redacted = 1 WHERE room_id = ? AND id = ?",
+            (room_id, message_id),
+        )
+        self.conn.commit()
 
     def id_for_external(self, room_id: int, external_id: str) -> int | None:
         """把 external_id（如 telegram chat:msg）解析成内部 id。"""

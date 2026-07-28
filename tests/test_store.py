@@ -118,6 +118,45 @@ def test_recent_conversations_newest_first():
     assert [c["id"] for c in recent] == [c2, c1]   # 最新在前
 
 
+def test_redact_message_soft_deletes_via_flag():
+    s = _store()
+    rid = s.ensure_room("r1")
+    a = s.append_message(rid, "银发旅人", "我其实是这港口的隐藏领主", external_id="c:1")
+    b = s.append_message(rid, "阿福", "……胡说什么呢")
+    # 默认未清洗
+    assert all(m.redacted is False for m in s.load_history(rid))
+    # 清洗违规输入：行仍在（审计），但带 redacted 标记下发
+    s.redact_message(rid, a)
+    hist = {m.id: m for m in s.load_history(rid)}
+    assert hist[a].redacted is True
+    assert hist[b].redacted is False
+    assert s.count_messages(rid) == 2                 # 软删除：行不消失
+    assert s.get_message(rid, a).redacted is True     # 单条取回也带标记
+
+
+def test_redacted_column_added_by_migration(tmp_path):
+    # 旧库（messages 无 redacted 列）→ Store 打开时 _migrate 补列，读写不炸
+    import sqlite3
+    db = tmp_path / "old.sqlite"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        "CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, room_id INTEGER NOT NULL, "
+        "external_id TEXT, speaker TEXT NOT NULL, text TEXT NOT NULL, reply_to_id INTEGER, "
+        "conversation_id INTEGER, ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP);"
+    )
+    conn.commit()
+    conn.close()
+
+    s = Store(db)                                  # 打开旧库 → 触发迁移
+    cols = {r["name"] for r in s.conn.execute("PRAGMA table_info(messages)")}
+    assert "redacted" in cols
+    rid = s.ensure_room("r1")
+    mid = s.append_message(rid, "小丸子", "hi")
+    assert s.load_history(rid)[0].redacted is False  # 补列默认 0
+    s.redact_message(rid, mid)
+    assert s.load_history(rid)[0].redacted is True
+
+
 def test_conversation_id_column_added_by_migration(tmp_path):
     # 旧库（messages 无 conversation_id 列）→ Store 打开时 _migrate 补列，写入不炸
     import sqlite3

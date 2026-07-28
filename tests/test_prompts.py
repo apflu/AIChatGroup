@@ -13,8 +13,8 @@ _ALL = [
     "conductor.system", "conductor.user",
     "storyteller.system", "storyteller.user",
     "compaction.system", "compaction.user",
-    "output_contract", "tail_header", "tail_memory", "tail_conductor", "persona",
-    "world", "layer1_summary", "layer1_relations",
+    "output_contract", "tail_header", "tail_memory", "tail_conductor", "tail_knowledge",
+    "persona", "world", "layer1_summary", "layer1_relations",
 ]
 
 
@@ -28,6 +28,12 @@ def test_usher_prompt_lists_every_direction_and_absorb():
     for word in DIRECTIONS:
         assert word in text, f"usher.system.md 缺方向词 {word!r}（与 DIRECTIONS 漂移）"
     assert "absorb" in text
+
+
+def test_usher_prompt_carries_violate_marker():
+    # violate 是 canon 违规的机器契约（parser 据此置 violation）；散文必须描述它
+    from aichatgroup.message.usher import _VIOLATE
+    assert _VIOLATE in load("usher.system"), "usher.system.md 缺 violate 标记（与解析器漂移）"
 
 
 def test_conductor_prompt_mentions_none_contract():

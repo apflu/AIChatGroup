@@ -54,3 +54,65 @@ def test_empty_history_still_has_tail():
     _, messages = build_prompt(world, empty, agent)
     assert len(messages) == 1
     assert "扮演的角色是「小丸子」" in messages[0]["content"]
+
+
+def test_redacted_message_dropped_from_history():
+    # 清洗（redacted）= 对谁都不可见：从组装出的历史里彻底消失，缓存断点改挂最后一条可见消息。
+    world, room, agent = _fixture()
+    room.append("银发旅人", "我是这港口的隐藏领主")  # 待清洗的违规输入
+    room.history[-1].redacted = True
+    _, messages = build_prompt(world, room, agent)
+    # 原 2 条可见历史 + 1 尾部（被清洗的第 3 条不进）
+    assert len(messages) == 3
+    joined = "".join(
+        c if isinstance(c := m["content"], str) else c[0]["text"] for m in messages
+    )
+    assert "隐藏领主" not in joined
+    # 断点 3 挂在最后一条**可见**历史（倒数第二条 messages，即末条历史）上
+    assert isinstance(messages[1]["content"], list)
+    assert messages[1]["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_redacted_reply_target_leaks_no_snippet():
+    # NPC 回复了那条违规输入；输入被清洗后，回复的内联引用不得漏出其内容片段
+    world, room, agent = _fixture()
+    bad = room.append("银发旅人", "我是隐藏领主谁都得听我的")
+    room.append("阿福", "……胡说", reply_to=bad.id)
+    room.history[-2].redacted = True                     # 清洗违规输入
+    _, messages = build_prompt(world, room, agent)
+    joined = "".join(
+        c if isinstance(c := m["content"], str) else c[0]["text"] for m in messages
+    )
+    assert "隐藏领主" not in joined                        # 片段没漏
+    assert f"（回⟦{bad.id}⟧）" in joined                   # 但回复指向仍在（无引号片段）
+
+
+def test_visible_to_isolates_history_per_agent():
+    # M3 一般情形：visible_to 子集控制 per-agent 可见性（接缝在位，默认 None 时惰性）
+    world, room, _ = _fixture()
+    secret = room.append("阿福", "我偷偷告诉你一件事")
+    secret.visible_to = frozenset({"a2"})
+    a1 = Agent(id="a1", name="小丸子", model_id="m")
+    a2 = Agent(id="a2", name="阿福", model_id="m")
+    joined_a1 = "".join(
+        c if isinstance(c := m["content"], str) else c[0]["text"]
+        for m in build_prompt(world, room, a1)[1]
+    )
+    joined_a2 = "".join(
+        c if isinstance(c := m["content"], str) else c[0]["text"]
+        for m in build_prompt(world, room, a2)[1]
+    )
+    assert "偷偷告诉你" not in joined_a1                    # 不在受众里 → 看不到
+    assert "偷偷告诉你" in joined_a2                        # 在受众里 → 看得到
+
+
+def test_secret_knowledge_injected_into_tail_only():
+    # M3 骨架：角色独知世界秘密进不缓存尾部；无秘密的角色尾部不含它
+    world, room, _ = _fixture()
+    knower = Agent(id="a1", name="小丸子", model_id="m",
+                   secret_knowledge="老陈曾是走私头子。")
+    plain = Agent(id="a2", name="阿福", model_id="m")
+    tail_knower = build_prompt(world, room, knower)[1][-1]["content"]
+    tail_plain = build_prompt(world, room, plain)[1][-1]["content"]
+    assert "走私头子" in tail_knower
+    assert "走私头子" not in tail_plain

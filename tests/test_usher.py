@@ -44,6 +44,32 @@ def test_tolerates_noisy_output():
     assert d.direction == "disrupt"
 
 
+def test_direction_without_violate_is_not_violation():
+    # 合法强推：有方向、无 violate → escalate 但不清洗
+    d = _usher("advance").classify(RoomState(), "我提议大家去码头")
+    assert d.escalate is True and d.direction == "advance"
+    assert d.violation is False
+
+
+def test_direction_plus_violate_flags_violation():
+    # 抵触 canon：方向 + violate → escalate 且待清洗（violate 在方向词后仍被扫到）
+    d = _usher("disrupt violate").classify(RoomState(), "我是隐藏领主")
+    assert d.escalate is True and d.direction == "disrupt"
+    assert d.violation is True
+
+
+def test_violate_only_defaults_to_disrupt_escalation():
+    # 只说 violate 没给方向：canon 破坏本质捣乱 → 兜底 disrupt + violation
+    d = _usher("violate").classify(RoomState(), "世界规则由我改写")
+    assert d.escalate is True and d.direction == "disrupt"
+    assert d.violation is True
+
+
+def test_absorb_is_never_a_violation():
+    d = _usher("absorb").classify(RoomState(), "今天天气不错")
+    assert d.escalate is False and d.violation is False
+
+
 def test_unparseable_defaults_to_absorb():
     # 拿不准 → 保守放行（误判只赔延迟，不赔丢失）
     d = _usher("嗯？说不好").classify(RoomState(), "……")

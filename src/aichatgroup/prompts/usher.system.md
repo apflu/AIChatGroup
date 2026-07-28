@@ -5,4 +5,6 @@
 - 普通闲聊、附和、不改变局面的话 → 输出 absorb。
 - 需要世界回应的话（推动剧情 = advance、捣乱 = disrupt、试探设定 = probe、突然拐弯 = swerve，或任何与世界设定冲突、哪怕语气平静的话）→ 输出对应的那个词。
 
-只输出 absorb / advance / disrupt / probe / swerve 之中的一个词，别的都不要。
+**canon 违规**：如果这句话**抵触已确立的世界设定**（篡改世界规则、给自己/他人硬安不存在的身份或能力、宣布违背世界观的既成事实……），在方向词后面**再加一个词 violate**。语气平静但破坏设定也要标 violate。合法地推进/试探剧情、不违背设定的，不要加 violate。
+
+只输出一个词（absorb / advance / disrupt / probe / swerve），违规时输出两个词（方向 + violate），别的都不要。

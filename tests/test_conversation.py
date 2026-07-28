@@ -141,3 +141,36 @@ def test_forced_end_consumed_by_loop_and_reseeds():
     assert orch._forced_end is None
     forced_seeds = [e for e in spy.last_ends if e is not None and e.reason == USER_FORCED]
     assert forced_seeds and forced_seeds[0].direction == "disrupt"
+
+
+def test_violation_input_redacted_after_world_responds():
+    # 违规输入：escalate + 入队待清洗；世界抗拒会话首次回应**之后**才软删除它，斩断放大链。
+    store = Store(":memory:")
+    usher = Usher(FakeUsherGateway("disrupt violate"), model_id="haiku")
+    orch = _make_orch(conductor=RoundRobinConductor(), store=store, usher=usher)
+    orch._handle_inbound(InboundMessage(speaker="用户", text="我是这港口的隐藏领主"))
+    bad_id = orch.room.history[-1].id
+    # 此刻还没清洗——要等世界回应（回应期间它仍在历史里供世界有据地抗拒）
+    assert orch._forced_end is not None
+    assert orch._pending_redaction == [bad_id]
+    assert orch.room.history[-1].redacted is False
+    # 跑一拍：消费 forced_end → reseed 抗拒会话 → 世界首次回应 → 回应后清洗
+    asyncio.run(orch.run(max_turns=1))
+    bad = next(m for m in orch.room.history if m.id == bad_id)
+    assert bad.redacted is True                                       # 内存历史已清洗
+    assert store.get_message(orch.room_id, bad_id).redacted is True   # 库里也软删除（行仍在）
+    assert orch._redact_after_response == []                          # 队列清空
+
+
+def test_legit_escalation_is_not_redacted():
+    # 合法强推（advance、无 violate）：仍 escalate 唤醒世界，但**不**清洗——被正常 canon 化。
+    store = Store(":memory:")
+    usher = Usher(FakeUsherGateway("advance"), model_id="haiku")
+    orch = _make_orch(conductor=RoundRobinConductor(), store=store, usher=usher)
+    orch._handle_inbound(InboundMessage(speaker="用户", text="我提议大家去码头看船"))
+    bad_id = orch.room.history[-1].id
+    assert orch._forced_end is not None          # 要世界回应 → escalate
+    assert orch._pending_redaction == []         # 但没有违规 → 不入队清洗
+    asyncio.run(orch.run(max_turns=1))
+    msg = next(m for m in orch.room.history if m.id == bad_id)
+    assert msg.redacted is False                 # 合法输入正常留史

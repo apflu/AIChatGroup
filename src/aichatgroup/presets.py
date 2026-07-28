@@ -86,6 +86,7 @@ def load_preset(path: str | os.PathLike[str]) -> RoomPreset:
                 model_id=a["model_id"],
                 base_prompt=a.get("base_prompt", ""),
                 character_card=a.get("character_card", ""),
+                secret_knowledge=a.get("secret_knowledge", ""),
                 pacing=_build_pacing(a.get("pacing")),
             )
         )

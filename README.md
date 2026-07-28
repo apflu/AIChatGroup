@@ -176,4 +176,6 @@ fuzz 测试守护。用 `{{…}}` 而非 `<<…>>`：尖括号诱发「XML 要�
 - ~~**M2** Storyteller（会话级编导，会话边界事件驱动播种意图）+ Usher（用户输入台口分流）+ 会话状态机
   + 结束检测（lull/deadlock/intent_fulfilled/user_forced/max_length）+ `conversations` 持久化 + 记忆去重~~ ✅
   （详见 [docs/milestone/M2.md](docs/milestone/M2.md)）
-- **M3** 知识隔离。 **M4** 世界书生成 + RAG。 **M5** FoundryVTT 支持。
+- **M3** 知识隔离（进行中）：可见性接缝（`build_prompt` per-message 过滤）+ Usher 回应后清洗
+  （违规输入待世界回应后软删除，斩断 M2 §9 的污染放大链）+ per-agent 世界秘密骨架
+  （详见 [docs/milestone/M3.md](docs/milestone/M3.md)）。 **M4** 世界书生成 + RAG。 **M5** FoundryVTT 支持。

@@ -29,6 +29,9 @@ logger = logging.getLogger(__name__)
 # 留在解析器身边；散文指令在 prompts/usher.system.md，test_prompts 断言这些词都出现在其中，防漂移。
 DIRECTIONS = ("advance", "disrupt", "probe", "swerve")
 _ABSORB = "absorb"
+# canon 违规标记：与方向**正交**——模型在方向词后追加它，表示输入抵触已确立的世界设定。
+# 只有它触发"世界回应后清洗"（M3 桥接）；合法强推（有方向、无 violate）照常 canon 化，不清洗。
+_VIOLATE = "violate"
 
 _USHER_SYSTEM = load_prompt("usher.system")
 
@@ -37,6 +40,7 @@ _USHER_SYSTEM = load_prompt("usher.system")
 class UsherDecision:
     escalate: bool          # True → user_forced（提前收束会话、唤醒 storyteller）
     direction: str = ""     # escalate 时的方向：advance / disrupt / probe / swerve
+    violation: bool = False  # 抵触世界 canon → 世界回应后应清洗（与 direction 正交）
     raw: str = ""           # 模型原始输出，便于日志 / 调试
 
     @property
@@ -62,7 +66,7 @@ class Usher:
                 system=[{"type": "text", "text": _USHER_SYSTEM}],
                 messages=[{"role": "user", "content": user}],
                 model_id=self.model_id,
-                max_tokens=8,
+                max_tokens=12,          # 容两词：方向 + 可选的 violate 标记
             )
             log_model_raw("usher", resp.text, speaker=speaker)
             choice = resp.text.strip().lower()
@@ -70,12 +74,22 @@ class Usher:
             logger.warning("usher 模型调用失败，保守 absorb：%s", exc)
             return UsherDecision(escalate=False, raw="")
 
+        # violate 与方向正交，先整体扫一遍（否则方向词命中即返回会漏掉其后的 violate）
+        tokens = choice.replace("，", " ").replace(",", " ").split()
+        violation = _VIOLATE in tokens
         # 容忍噪声：取第一个命中的方向词或 absorb
-        for token in choice.replace("，", " ").replace(",", " ").split():
+        for token in tokens:
             if token in DIRECTIONS:
-                return UsherDecision(escalate=True, direction=token, raw=choice)
+                return UsherDecision(
+                    escalate=True, direction=token, violation=violation, raw=choice
+                )
             if token == _ABSORB:
                 return UsherDecision(escalate=False, raw=choice)
+        if violation:
+            # 只说了 violate 没给方向：canon 破坏本质是"捣乱"，默认 disrupt 兜底
+            return UsherDecision(
+                escalate=True, direction="disrupt", violation=True, raw=choice
+            )
         # 无法解析 → 保守 absorb
         logger.debug("usher 输出无法解析(%r)，保守 absorb", choice)
         return UsherDecision(escalate=False, raw=choice)

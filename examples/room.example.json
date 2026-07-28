@@ -24,6 +24,7 @@
       "model_id": "clwd::claude-opus-4-6",
       "base_prompt": "你是退役水手。",
       "character_card": "沉稳、爱讲道理、偶尔毒舌。",
+      "secret_knowledge": "只有你知道：老陈年轻时是这片海最有名的走私头子，如今金盆洗手。别人问起他的过去，你会岔开话题。",
       "pacing": { "base_pause_s": 0.8, "per_char_s": 0.25, "explicit_scale": 1.5 },
       "bot_token_env": "TG_TOKEN_CHAR_2"
     },

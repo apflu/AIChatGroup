@@ -119,6 +119,11 @@ class Orchestrator:
         self._intent: ConversationIntent | None = None
         self._conv_id: int | None = None          # 当前会话 DB 行；惰性建（首个气泡时）
         self._forced_end: ConversationEnd | None = None   # usher escalate 置位，循环消费
+        # usher 判违规（canon 破坏）的输入 id：先在摄入处入队，forced_end 消费时转入
+        # _redact_after_response，等世界抗拒会话**首次成功回应之后**再清洗——回应期间它仍在
+        # 历史里供世界有据地抗拒，回应后消失，斩断后续 beat 的放大链（M3 桥接）。
+        self._pending_redaction: list[int] = []
+        self._redact_after_response: list[int] = []
 
         self._running = False
         self._stop_event = asyncio.Event()
@@ -221,13 +226,13 @@ class Orchestrator:
                 logger.debug("摄入去重：external_id=%s 已存在，跳过", msg.external_id)
                 return
         meta = {"external_id": msg.external_id} if msg.external_id else None
-        self.room.append(
+        appended = self.room.append(
             speaker, msg.text, id=mid, author_kind="human",
             reply_to=reply_to, meta=meta,
         )
         logger.info("摄入 [%s] %s", speaker, msg.text)
-        log_event("ingest", speaker=speaker, msg_id=mid, reply_to=reply_to)
-        self._triage_user_input(msg, speaker)
+        log_event("ingest", speaker=speaker, msg_id=appended.id, reply_to=reply_to)
+        self._triage_user_input(msg, speaker, appended.id)
 
     def _resolve_speaker(self, msg: InboundMessage) -> str:
         """把发送者解析成世界内显示名。无注册表→原显示名（旧行为）；有表但未注册→陌生人。"""
@@ -254,11 +259,13 @@ class Orchestrator:
         logger.info("玩家认领世界名：%s", player.name)
         log_event("player_register", name=player.name, channel=channel)
 
-    def _triage_user_input(self, msg: InboundMessage, speaker: str) -> None:
+    def _triage_user_input(self, msg: InboundMessage, speaker: str, msg_id: int) -> None:
         """usher 台口分流：escalate → 置 user_forced，让 speak 循环提前收束当前会话。
 
         误判只赔延迟不赔丢失——absorb 的输入已进历史，下个边界 storyteller 一定看到。
         speaker 是解析后的世界名（usher 也据世界身份判断，而非原始显示名）。
+        canon 违规（decision.violation）额外把 msg_id 入队待清洗：世界回应后再抹去它，
+        斩断"absorb 的破坏被后续 beat 放大成既成事实"的污染复利（M2.md §9）。
         """
         if self.usher is None:
             return
@@ -267,9 +274,29 @@ class Orchestrator:
             self._forced_end = ConversationEnd(
                 reason=USER_FORCED, summary_hook=msg.text, direction=decision.direction
             )
-            log_event("usher_escalate", speaker=speaker, direction=decision.direction)
+            if decision.violation:
+                self._pending_redaction.append(msg_id)
+            log_event(
+                "usher_escalate", speaker=speaker,
+                direction=decision.direction, violation=decision.violation,
+            )
         else:
             log_event("usher_absorb", speaker=speaker)
+
+    def _do_redact(self, msg_id: int) -> None:
+        """世界回应违规输入之后，把它软删除：从此对所有 agent 的模型上下文不可见。
+
+        仅上下文——DB 行保留（审计），Telegram 消息不动。内存 room.history 必须同步置位
+        （speak 循环直接读 room.history 组装 prompt，只改库本次运行仍看得见）。
+        """
+        if self.store is not None and self.room_id is not None:
+            self.store.redact_message(self.room_id, msg_id)
+        for m in self.room.history:
+            if m.id == msg_id:
+                m.redacted = True
+                break
+        logger.info("清洗违规输入 ⟦%s⟧", msg_id)
+        log_event("usher_cleanse", msg_id=msg_id)
 
     # ---- 回复寻址辅助 --------------------------------------------------
     def _internal_id_for_external(self, external_id: str | None) -> int | None:
@@ -334,6 +361,11 @@ class Orchestrator:
                 self._forced_end = None
                 self._end_conversation(forced)
                 self._begin_conversation(last_end=forced)
+                # 违规输入随抗拒会话开场进入"待回应后清洗"队列：此刻还不动它，
+                # 让接下来的世界抗拒回应能读到它、有据地抵抗；回应成功后再清洗。
+                if self._pending_redaction:
+                    self._redact_after_response.extend(self._pending_redaction)
+                    self._pending_redaction = []
                 continue
 
             speaker_id = self.conductor.next_speaker(self.room, self.agents)
@@ -348,6 +380,12 @@ class Orchestrator:
                     # 单个 provider 抽风（鉴权失败/超时/限流）不应拖垮整屋子。
                     logger.exception("角色 %s 发言失败，跳过本回合", agent.name)
                     log_event("error", agent=agent.name, error=str(exc))
+                else:
+                    # 世界成功回应 → 若有待清洗的违规输入，现在抹去它（回应之后），斩断放大链。
+                    if self._redact_after_response:
+                        for mid in self._redact_after_response:
+                            self._do_redact(mid)
+                        self._redact_after_response = []
                 turns += 1
 
             # beat 观测 → 会话是否收束（带 reason）
