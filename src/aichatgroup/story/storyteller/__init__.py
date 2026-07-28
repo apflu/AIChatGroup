@@ -4,7 +4,7 @@
 - StubStoryteller：固定闲聊，M2-A 骨架用（零模型）。
 - ModelStoryteller：重模型，M2-C 真意图（张力 / 世界抗拒 / 定向回应）。
 """
-from .base import Storyteller, StubStoryteller
+from .base import Storyteller, StubStoryteller, merge_knowledge
 from .model import ModelStoryteller
 
-__all__ = ["Storyteller", "StubStoryteller", "ModelStoryteller"]
+__all__ = ["Storyteller", "StubStoryteller", "ModelStoryteller", "merge_knowledge"]

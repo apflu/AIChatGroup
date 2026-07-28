@@ -19,16 +19,17 @@ from ...domain.conversation import (
     ConversationEnd,
     ConversationIntent,
 )
-from ...domain.types import RoomState
+from ...domain.types import Agent, RoomState
 from ...io.gateway import ModelGateway
 from ...observability import log_model_raw
 from ...prompts import load as load_prompt, render as render_prompt
 
 logger = logging.getLogger(__name__)
 
-# 输出契约标签（parser 据此抽 kind/hook）。散文在 prompts/storyteller.system.md。
+# 输出契约标签（parser 据此抽 kind/hook/授知）。散文在 prompts/storyteller.system.md。
 _KIND_LABEL = "KIND:"
 _HOOK_LABEL = "HOOK:"
+_KNOW_LABEL = "KNOW"     # `KNOW <agent_id>: <只有 ta 知道的事>`（M3 知识不对称，可 0~N 行）
 
 _STORYTELLER_SYSTEM = load_prompt("storyteller.system")
 
@@ -42,11 +43,16 @@ class ModelStoryteller:
         self.recent_window = recent_window
 
     def seed(
-        self, room: RoomState, last_end: ConversationEnd | None
+        self,
+        room: RoomState,
+        last_end: ConversationEnd | None,
+        agents: list[Agent] | None = None,
     ) -> ConversationIntent:
         recent = "\n".join(
             m.render() for m in room.history[-self.recent_window :]
         ) or "（还没有人说话）"
+        # 在场角色名册（name+id）：storyteller 据此按 agent_id 私授知识；不给则无法定向授知。
+        cast = "、".join(f"{a.name}({a.id})" for a in agents) if agents else "（未提供在场角色）"
         # 局势 = 长期摘要 + 客观关系（首段会话时这是 storyteller 唯一的"依据"，
         # 房间铺底的种子摘要经此进 storyteller 的决策，否则它只能看空历史瞎猜）
         situation_parts = []
@@ -62,6 +68,7 @@ class ModelStoryteller:
             "storyteller.user",
             situation=situation,
             recent=recent,
+            cast=cast,
             last_reason=last_reason,
             last_summary=last_summary,
             direction=direction,
@@ -82,6 +89,7 @@ class ModelStoryteller:
     def _parse(self, text: str) -> ConversationIntent:
         kind = CHITCHAT
         hook_lines: list[str] = []
+        knowledge: dict[str, str] = {}
         collecting_hook = False
         for line in text.splitlines():
             stripped = line.strip()
@@ -94,7 +102,17 @@ class ModelStoryteller:
             elif upper.startswith(_HOOK_LABEL):
                 hook_lines.append(stripped[len(_HOOK_LABEL) :].strip())
                 collecting_hook = True     # HOOK 可跨多行
+            elif upper.startswith(_KNOW_LABEL + " "):
+                # `KNOW <agent_id>: <知识>`——首个冒号切 id / 内容；id 合法性交 runtime 按名册筛
+                body = stripped[len(_KNOW_LABEL) :].lstrip(" :")
+                if ":" in body or "：" in body:
+                    sep = ":" if ":" in body else "："
+                    aid, _, know = body.partition(sep)
+                    aid, know = aid.strip(), know.strip()
+                    if aid and know:
+                        knowledge[aid] = f"{knowledge[aid]} {know}".strip() if aid in knowledge else know
+                collecting_hook = False
             elif collecting_hook and stripped:
                 hook_lines.append(stripped)
         hook = " ".join(h for h in hook_lines if h).strip()
-        return ConversationIntent(kind=kind, hook=hook)
+        return ConversationIntent(kind=kind, hook=hook, knowledge=knowledge)

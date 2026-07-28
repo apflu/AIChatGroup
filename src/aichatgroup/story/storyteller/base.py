@@ -13,14 +13,39 @@ from __future__ import annotations
 from typing import Protocol
 
 from ...domain.conversation import CHITCHAT, ConversationEnd, ConversationIntent
-from ...domain.types import RoomState
+from ...domain.types import Agent, RoomState
+
+
+def merge_knowledge(current: str, addition: str) -> str:
+    """把 storyteller 私授的一条知识累积进该角色的知识快照（逐行去重）。
+
+    知识是自由文本（一句"只有你知道的事"），逐行追加、已有的不重复堆叠——形态同 merge_memory，
+    但 merge_memory 存 JSON 行（角色自记的结构化增量），这里存散文行（世界私授的事实）。
+    空快照直接返回该行；重复则原样返回，保证累积幂等。
+    """
+    line = addition.strip()
+    if not line:
+        return current.rstrip()
+    if not current.strip():
+        return line
+    existing = current.rstrip().split("\n")
+    if line in existing:
+        return current.rstrip()
+    return f"{current.rstrip()}\n{line}"
 
 
 class Storyteller(Protocol):
     def seed(
-        self, room: RoomState, last_end: ConversationEnd | None
+        self,
+        room: RoomState,
+        last_end: ConversationEnd | None,
+        agents: list[Agent] | None = None,
     ) -> ConversationIntent:
-        """为下一段会话播种意图。last_end=None 表示这是本房间的第一段。"""
+        """为下一段会话播种意图。last_end=None 表示这是本房间的第一段。
+
+        agents 是在场角色名册（可选）——ModelStoryteller 据此列出 cast、按 agent_id 私授知识
+        （M3 知识不对称）；不给时退化为零授知的旧行为。
+        """
         ...
 
 
@@ -36,6 +61,9 @@ class StubStoryteller:
         self.hook = hook
 
     def seed(
-        self, room: RoomState, last_end: ConversationEnd | None
+        self,
+        room: RoomState,
+        last_end: ConversationEnd | None,
+        agents: list[Agent] | None = None,
     ) -> ConversationIntent:
         return ConversationIntent(kind=self.kind, hook=self.hook)

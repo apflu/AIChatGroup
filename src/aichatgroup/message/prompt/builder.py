@@ -39,14 +39,23 @@ def _cache(text: str) -> SystemBlock:
     return {"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}
 
 
-def build_tail(agent: Agent, memory_text: str, conductor_instruction: str) -> str:
+def build_tail(
+    agent: Agent,
+    memory_text: str,
+    conductor_instruction: str,
+    granted_knowledge: str = "",
+) -> str:
     """第 3 层尾部：人设 + 角色独知世界秘密 + 私有记忆快照 + conductor 指令 + 输出契约。
 
-    per-agent 的知识隔离（角色秘密）落在这——尾部本就每 agent 不同且不缓存，注入零缓存回归。
+    per-agent 的知识隔离落在这——尾部本就每 agent 不同且不缓存，注入零缓存回归。独知内情两来源：
+    `agent.secret_knowledge`（预设静态）+ `granted_knowledge`（storyteller 边界私授、累积），合并渲染。
     """
     parts = [load_prompt("tail_header"), agent.render_persona()]
-    if agent.secret_knowledge.strip():
-        parts.append(render_prompt("tail_knowledge", knowledge=agent.secret_knowledge.strip()))
+    knowledge = "\n".join(
+        k for k in (agent.secret_knowledge.strip(), granted_knowledge.strip()) if k
+    )
+    if knowledge:
+        parts.append(render_prompt("tail_knowledge", knowledge=knowledge))
     if memory_text.strip():
         parts.append(render_prompt("tail_memory", memory=memory_text.strip()))
     if conductor_instruction.strip():
@@ -111,6 +120,9 @@ def build_prompt(
         else:
             messages.append({"role": "user", "content": rendered})
 
-    tail = build_tail(agent, room.memory.get(agent.id, ""), conductor_instruction)
+    tail = build_tail(
+        agent, room.memory.get(agent.id, ""), conductor_instruction,
+        granted_knowledge=room.knowledge.get(agent.id, ""),
+    )
     messages.append({"role": "user", "content": tail})  # 尾部，不缓存
     return system, messages

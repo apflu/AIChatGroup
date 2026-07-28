@@ -52,6 +52,15 @@ CREATE TABLE IF NOT EXISTS memory_snapshots (
     updated_ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (room_id, agent_id)
 );
+-- storyteller 私授的每角色知识（M3 知识不对称）：与 memory 平行、语义不同
+-- （memory=角色自记；knowledge=世界私授的事实），累积、进不缓存尾部。
+CREATE TABLE IF NOT EXISTS knowledge_snapshots (
+    room_id    INTEGER NOT NULL,
+    agent_id   TEXT NOT NULL,
+    content    TEXT NOT NULL,
+    updated_ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (room_id, agent_id)
+);
 CREATE TABLE IF NOT EXISTS summaries (
     room_id            INTEGER PRIMARY KEY,
     long_term_summary  TEXT NOT NULL DEFAULT '',
@@ -288,6 +297,22 @@ class Store:
         ).fetchall()
         return {r["agent_id"]: r["content"] for r in rows}
 
+    # ---- knowledge (M3 storyteller 私授) ------------------------------
+    def save_knowledge(self, room_id: int, agent_id: str, content: str) -> None:
+        self.conn.execute(
+            "INSERT INTO knowledge_snapshots(room_id, agent_id, content) VALUES (?, ?, ?) "
+            "ON CONFLICT(room_id, agent_id) DO UPDATE SET "
+            "content = excluded.content, updated_ts = CURRENT_TIMESTAMP",
+            (room_id, agent_id, content),
+        )
+        self.conn.commit()
+
+    def load_knowledge(self, room_id: int) -> dict[str, str]:
+        rows = self.conn.execute(
+            "SELECT agent_id, content FROM knowledge_snapshots WHERE room_id = ?", (room_id,)
+        ).fetchall()
+        return {r["agent_id"]: r["content"] for r in rows}
+
     # ---- summaries -----------------------------------------------------
     def save_summary(
         self, room_id: int, long_term_summary: str, objective_relations: str
@@ -320,4 +345,5 @@ class Store:
             objective_relations=relations,
             history=self.load_history(room_id, limit=history_limit),
             memory=self.load_memory(room_id),
+            knowledge=self.load_knowledge(room_id),
         )

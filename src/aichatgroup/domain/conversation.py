@@ -43,6 +43,10 @@ class ConversationIntent:
     focus: list[str] = field(default_factory=list)   # 可选：点名相关角色 id
     length_budget: int | None = None                 # 粗略预期 beat 数
     tension_target: float | None = None              # 期望张力水位（0~1）
+    # M3 知识不对称：storyteller 私授给个别角色的知识（agent_id -> 一句只有 ta 知道的事）。
+    # 由 runtime 累积进 room.knowledge[agent_id]、流进该角色的**不缓存尾部**（缓存安全，
+    # 不碰共享历史前缀）。多数会话为空 dict → 完全惰性。hook 是全体看的压力，这是私授的知情差。
+    knowledge: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

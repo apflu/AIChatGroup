@@ -41,6 +41,19 @@ def test_memory_upsert_and_load():
     assert mem["a2"] == '{"note": "x"}'
 
 
+def test_knowledge_upsert_load_and_compose():
+    s = _store()
+    rid = s.ensure_room("r1")
+    assert s.load_knowledge(rid) == {}
+    s.save_knowledge(rid, "a2", "老陈是走私头子")
+    s.save_knowledge(rid, "a2", "老陈是走私头子\n港口有暗道")  # 整块覆盖（累积在 runtime 层做）
+    s.save_knowledge(rid, "a1", "别人不知道的事")
+    k = s.load_knowledge(rid)
+    assert "暗道" in k["a2"] and k["a1"] == "别人不知道的事"
+    # load_room_state 组装 knowledge
+    assert s.load_room_state(rid).knowledge["a2"] == "老陈是走私头子\n港口有暗道"
+
+
 def test_summary_upsert_and_load():
     s = _store()
     rid = s.ensure_room("r1")

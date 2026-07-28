@@ -1,7 +1,9 @@
 """会话状态机：seed→run→end→reseed、usher user_forced 提前收束、会话持久化。"""
 import asyncio
 
-from aichatgroup.domain import LULL, USER_FORCED, Agent, ConversationEnd, WorldBook
+from aichatgroup.domain import (
+    LULL, USER_FORCED, Agent, ConversationEnd, ConversationIntent, WorldBook,
+)
 from aichatgroup.io.gateway import MockGateway
 from aichatgroup.io.persistence import Store
 from aichatgroup.io.transport import InboundMessage, InMemoryTransport
@@ -57,9 +59,9 @@ class SpyStoryteller:
         self.last_ends = []
         self._inner = StubStoryteller()
 
-    def seed(self, room, last_end):
+    def seed(self, room, last_end, agents=None):
         self.last_ends.append(last_end)
-        return self._inner.seed(room, last_end)
+        return self._inner.seed(room, last_end, agents)
 
 
 class FakeUsherGateway:
@@ -69,6 +71,16 @@ class FakeUsherGateway:
     def complete(self, system, messages, model_id, max_tokens=1024):
         from aichatgroup.domain.types import GatewayResponse, Usage
         return GatewayResponse(text=self.verdict, usage=Usage())
+
+
+class GrantStoryteller:
+    """seed 时私授固定知识（测 M3 知识不对称的应用/持久化/名册过滤）。"""
+
+    def __init__(self, grants):
+        self.grants = grants
+
+    def seed(self, room, last_end, agents=None):
+        return ConversationIntent(kind="chitchat", knowledge=dict(self.grants))
 
 
 def _make_orch(*, conductor, store=None, storyteller=None, usher=None, detector=None):
@@ -160,6 +172,17 @@ def test_violation_input_redacted_after_world_responds():
     assert bad.redacted is True                                       # 内存历史已清洗
     assert store.get_message(orch.room_id, bad_id).redacted is True   # 库里也软删除（行仍在）
     assert orch._redact_after_response == []                          # 队列清空
+
+
+def test_storyteller_knowledge_grant_applied_persisted_and_filtered():
+    # storyteller 在会话边界私授知识 → 累积进 room.knowledge + 落库；未知 agent_id 丢弃。
+    store = Store(":memory:")
+    st = GrantStoryteller({"a2": "老陈是走私头子", "zzz": "该被丢弃"})
+    orch = _make_orch(conductor=RoundRobinConductor(), store=store, storyteller=st)
+    asyncio.run(orch.run(max_turns=1))
+    assert "走私头子" in orch.room.knowledge["a2"]                    # 授给名册内 agent
+    assert "zzz" not in orch.room.knowledge                          # 未知 id 丢弃
+    assert "走私头子" in store.load_knowledge(orch.room_id)["a2"]     # 持久化
 
 
 def test_legit_escalation_is_not_redacted():

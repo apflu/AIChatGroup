@@ -116,3 +116,22 @@ def test_secret_knowledge_injected_into_tail_only():
     tail_plain = build_prompt(world, room, plain)[1][-1]["content"]
     assert "走私头子" in tail_knower
     assert "走私头子" not in tail_plain
+
+
+def test_storyteller_granted_knowledge_only_reaches_that_agent_tail():
+    # M3 知识不对称：room.knowledge[agent_id]（storyteller 私授）只进该角色的不缓存尾部
+    world, room, _ = _fixture()
+    room.knowledge["a1"] = "港口今晚有暗号交易"
+    a1 = Agent(id="a1", name="小丸子", model_id="m")
+    a2 = Agent(id="a2", name="阿福", model_id="m")
+    assert "暗号交易" in build_prompt(world, room, a1)[1][-1]["content"]
+    assert "暗号交易" not in build_prompt(world, room, a2)[1][-1]["content"]
+
+
+def test_static_and_granted_knowledge_combine_in_tail():
+    # 独知内情两来源合并：预设静态 secret_knowledge + storyteller 动态私授
+    world, room, _ = _fixture()
+    room.knowledge["a1"] = "港口有暗道"
+    a1 = Agent(id="a1", name="小丸子", model_id="m", secret_knowledge="老陈的往事")
+    tail = build_prompt(world, room, a1)[1][-1]["content"]
+    assert "老陈的往事" in tail and "港口有暗道" in tail

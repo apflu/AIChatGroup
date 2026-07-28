@@ -36,6 +36,19 @@ def test_usher_prompt_carries_violate_marker():
     assert _VIOLATE in load("usher.system"), "usher.system.md 缺 violate 标记（与解析器漂移）"
 
 
+def test_storyteller_prompt_carries_know_contract():
+    # KNOW 是 ModelStoryteller._parse 的授知机器契约；散文须描述它，防漂移
+    from aichatgroup.story.storyteller.model import _KNOW_LABEL
+    assert _KNOW_LABEL in load("storyteller.system")
+
+
+def test_storyteller_user_fills_cast_slot():
+    out = render("storyteller.user", situation="S", cast="阿福(a2)", recent="R",
+                 last_reason="lull", last_summary="x", direction="（无）")
+    assert "阿福(a2)" in out
+    assert "$" not in out          # 所有 slot（含新加的 cast）都被填
+
+
 def test_conductor_prompt_mentions_none_contract():
     assert "none" in load("conductor.system")
 

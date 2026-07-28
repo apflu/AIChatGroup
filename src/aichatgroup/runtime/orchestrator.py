@@ -44,7 +44,7 @@ from ..message.prompt import build_prompt
 from ..message.usher import Usher
 from ..observability import log_event, log_model_raw
 from ..story.memory.compaction import maybe_compact
-from ..story.storyteller import Storyteller, StubStoryteller
+from ..story.storyteller import Storyteller, StubStoryteller, merge_knowledge
 from .switch import MasterSwitch
 
 logger = logging.getLogger(__name__)
@@ -160,7 +160,8 @@ class Orchestrator:
     # ---- 会话状态机 ----------------------------------------------------
     def _begin_conversation(self, last_end: ConversationEnd | None = None) -> None:
         """seed / reseed：storyteller 为下一段会话播种意图，重置结束检测器。"""
-        self._intent = self.storyteller.seed(self.room, last_end)
+        self._intent = self.storyteller.seed(self.room, last_end, self.agents)
+        self._apply_knowledge_grants(self._intent)
         self._conv_id = None                       # 惰性建表：首个气泡时才落库
         self.detector.begin(self._intent)
         log_event(
@@ -169,6 +170,21 @@ class Orchestrator:
             hook=self._intent.hook,
             last_reason=(last_end.reason if last_end else None),
         )
+
+    def _apply_knowledge_grants(self, intent: ConversationIntent) -> None:
+        """把 storyteller 私授的知识累积进 room.knowledge[agent_id] + 持久化（M3 知识不对称）。
+
+        只认名册里的 agent_id（模型瞎报的 id 丢弃）；累积去重（merge_knowledge）；进不缓存尾部，
+        缓存安全。多数会话 intent.knowledge 为空 → 无操作。
+        """
+        for agent_id, grant in intent.knowledge.items():
+            if agent_id not in self._agent_by_id or not grant.strip():
+                continue
+            merged = merge_knowledge(self.room.knowledge.get(agent_id, ""), grant)
+            self.room.knowledge[agent_id] = merged
+            if self.store is not None and self.room_id is not None:
+                self.store.save_knowledge(self.room_id, agent_id, merged)
+            log_event("knowledge_grant", agent=agent_id)
 
     def _ensure_conversation_row(self) -> int | None:
         """首个气泡时才把会话落库——空会话（冷场即散）不留垃圾行。"""

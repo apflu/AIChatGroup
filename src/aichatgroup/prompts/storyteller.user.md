@@ -1,6 +1,9 @@
 # 世界局势
 $situation
 
+# 在场角色
+$cast
+
 # 最近对话
 $recent
 
@@ -9,4 +12,4 @@ $recent
 概述：$last_summary
 用户方向标签（仅 user_forced 时有意义）：$direction
 
-请为下一段对话定意图。只输出 KIND 和 HOOK 两行：
+请为下一段对话定意图。输出 KIND 和 HOOK 两行；如有知情差再加 KNOW 行：

@@ -1,7 +1,9 @@
-"""Storyteller：StubStoryteller 惰性 + ModelStoryteller 解析/回落。"""
-from aichatgroup.domain import CHITCHAT, DEVELOP_PLOT, USER_FORCED, ConversationEnd, RoomState
+"""Storyteller：StubStoryteller 惰性 + ModelStoryteller 解析/回落 + M3 授知。"""
+from aichatgroup.domain import (
+    CHITCHAT, DEVELOP_PLOT, USER_FORCED, Agent, ConversationEnd, RoomState,
+)
 from aichatgroup.domain.types import GatewayResponse, Usage
-from aichatgroup.story.storyteller import ModelStoryteller, StubStoryteller
+from aichatgroup.story.storyteller import ModelStoryteller, StubStoryteller, merge_knowledge
 
 
 class FakeGateway:
@@ -66,6 +68,39 @@ def test_model_storyteller_feeds_room_situation():
     prompt = gw.calls[0][1][0]["content"]
     assert "集市日的傍晚" in prompt
     assert "小丸子与阿福是老相识" in prompt
+
+
+def test_merge_knowledge_accumulates_and_dedups():
+    k = merge_knowledge("", "老陈曾是走私头子")
+    assert k == "老陈曾是走私头子"
+    k = merge_knowledge(k, "港口有暗道")
+    assert "老陈曾是走私头子" in k and "港口有暗道" in k
+    assert merge_knowledge(k, "港口有暗道") == k        # 重复不堆叠（幂等累积）
+    assert merge_knowledge(k, "   ") == k               # 空授予无操作
+
+
+def test_model_storyteller_parses_knowledge_grants():
+    gw = FakeGateway(
+        "KIND: develop_plot\nHOOK: 有人在撒谎\nKNOW a2: 其实是你偷的酒\nKNOW a1: 阿福在骗大家"
+    )
+    intent = ModelStoryteller(gw, model_id="opus").seed(RoomState(), last_end=None)
+    assert intent.knowledge["a2"] == "其实是你偷的酒"
+    assert intent.knowledge["a1"] == "阿福在骗大家"
+    assert "撒谎" in intent.hook and "偷的酒" not in intent.hook   # KNOW 不污染 hook
+
+
+def test_model_storyteller_no_know_lines_gives_empty_knowledge():
+    gw = FakeGateway("KIND: chitchat\nHOOK: 随便聊聊")
+    intent = ModelStoryteller(gw, model_id="opus").seed(RoomState(), last_end=None)
+    assert intent.knowledge == {}
+
+
+def test_model_storyteller_feeds_cast_roster():
+    gw = FakeGateway("KIND: chitchat\nHOOK: x")
+    st = ModelStoryteller(gw, model_id="opus")
+    st.seed(RoomState(), last_end=None, agents=[Agent(id="a2", name="阿福", model_id="m")])
+    prompt = gw.calls[0][1][0]["content"]
+    assert "阿福(a2)" in prompt          # 名册进 prompt，供按 id 授知
 
 
 def test_model_storyteller_feeds_last_end_context():

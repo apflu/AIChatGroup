@@ -167,6 +167,9 @@ class RoomState:
     history: list[Message] = field(default_factory=list)
     # 第 3 层尾部：每 Agent 私有记忆快照（agent_id -> 文本），每轮整块替换
     memory: dict[str, str] = field(default_factory=dict)
+    # 第 3 层尾部：每 Agent 被 storyteller 私授的知识（agent_id -> 累积文本，M3 知识不对称）。
+    # 与 memory（角色自记）区分:这是"世界让这个角色单独知道的事"，边界授予、累积、进尾部。
+    knowledge: dict[str, str] = field(default_factory=dict)
     # 离线场景（无 store）铸造消息 id 的计数器；有 store 时由传入的显式 id 决定。
     _next_id: int = field(default=1, repr=False)
 
