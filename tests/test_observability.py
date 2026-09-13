@@ -3,13 +3,13 @@ import asyncio
 
 from loguru import logger
 
-from aichatgroup.message.conductor import RoundRobinConductor
 from aichatgroup.domain import Agent, WorldBook
 from aichatgroup.io.gateway import MockGateway
-from aichatgroup.observability import log_event
 from aichatgroup.io.persistence import Store
-from aichatgroup.runtime import Orchestrator
 from aichatgroup.io.transport import InMemoryTransport
+from aichatgroup.message.conductor import RoundRobinConductor
+from aichatgroup.observability import log_event
+from aichatgroup.runtime import Orchestrator
 
 
 class _Capture:
@@ -89,6 +89,7 @@ def test_model_call_event_has_no_input_tokens():
 
 def test_model_raw_is_below_trace_and_tagged_by_source():
     from loguru import logger as _lg
+
     from aichatgroup.observability import log_model_raw
     assert _lg.level("FIREHOSE").no < _lg.level("TRACE").no
     with _Capture(level="FIREHOSE") as cap:

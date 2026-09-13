@@ -21,13 +21,13 @@ def test_strip_leaves_quoted_value_alone():
 def test_load_dotenv_strips_inline_comment(tmp_path, monkeypatch):
     env = tmp_path / ".env"
     env.write_text(
-        "AICG_MODEL_DIRECTOR=aistudio#gemini-3.1-flash-lite      # 调度用便宜模型\n"
+        "AICG_MODEL_CONDUCTOR=aistudio#gemini-3.1-flash-lite     # 调度用便宜模型\n"
         "ANTHROPIC_API_KEY=sk-real-key\n",
         encoding="utf-8",
     )
     # 隔离：确保这两个 key 不在环境里，setdefault 才会写入
-    monkeypatch.delenv("AICG_MODEL_DIRECTOR", raising=False)
+    monkeypatch.delenv("AICG_MODEL_CONDUCTOR", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     s = Settings.from_env(env)
-    assert s.director_model == "aistudio#gemini-3.1-flash-lite"  # 注释已剥
+    assert s.conductor_model == "aistudio#gemini-3.1-flash-lite"  # 注释已剥
     assert s.anthropic_api_key == "sk-real-key"

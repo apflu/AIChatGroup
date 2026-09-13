@@ -1,6 +1,11 @@
 """Storyteller：StubStoryteller 惰性 + ModelStoryteller 解析/回落 + M3 授知。"""
 from aichatgroup.domain import (
-    CHITCHAT, DEVELOP_PLOT, USER_FORCED, Agent, ConversationEnd, RoomState,
+    CHITCHAT,
+    DEVELOP_PLOT,
+    USER_FORCED,
+    Agent,
+    ConversationEnd,
+    RoomState,
 )
 from aichatgroup.domain.types import GatewayResponse, Usage
 from aichatgroup.story.storyteller import ModelStoryteller, StubStoryteller, merge_knowledge

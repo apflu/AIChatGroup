@@ -20,7 +20,7 @@ SDK 的延迟导入）。于是「环境里有某家的 key、但没装它的 SD
 from __future__ import annotations
 
 import logging
-from typing import Callable
+from collections.abc import Callable
 
 from ...domain.types import GatewayResponse
 from .base import ModelGateway
@@ -81,7 +81,7 @@ class RouterGateway:
     def register(
         self, alias: str, gateway: ModelGateway,
         prefixes: tuple[str, ...] = (), *, default: bool = False,
-    ) -> "RouterGateway":
+    ) -> RouterGateway:
         """注册一个已构造好的网关实例。"""
         self._add(alias, _Slot(instance=gateway), prefixes, default)
         return self
@@ -89,7 +89,7 @@ class RouterGateway:
     def register_lazy(
         self, alias: str, factory: Callable[[], ModelGateway],
         prefixes: tuple[str, ...] = (), *, default: bool = False,
-    ) -> "RouterGateway":
+    ) -> RouterGateway:
         """注册一个工厂，路由到该别名/前缀时才构造网关。"""
         self._add(alias, _Slot(factory=factory), prefixes, default)
         return self

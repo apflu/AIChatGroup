@@ -1,7 +1,7 @@
 """运行配置与默认模型。
 
-默认走 `clwd` provider（本项目实际使用的端点），只有 opus / sonnet 两档；无 haiku 档，
-故"便宜档"退到 sonnet。都可被 `AICG_MODEL_*` 环境变量覆盖（写成 `别名::模型`）。
+默认走内置 `anthropic` 别名（配 ANTHROPIC_API_KEY 即可用）。用别的端点/别名（如自建的
+OpenAI 兼容网关）时，在 .env 里用 `AICG_MODEL_*` 覆盖（写成 `别名::模型`），别改这里的默认值。
 """
 from __future__ import annotations
 
@@ -11,10 +11,10 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# 各层默认模型（可被环境变量覆盖）。clwd 只有 opus/sonnet 两档，故 haiku 档退到 sonnet。
-DEFAULT_MODEL_OPUS = "clwd::claude-opus-4-6"
-DEFAULT_MODEL_SONNET = "clwd::claude-sonnet-5"
-DEFAULT_MODEL_HAIKU = "clwd::claude-sonnet-5"
+# 各层默认模型（可被环境变量覆盖）：重 / 中 / 便宜三档。
+DEFAULT_MODEL_OPUS = "anthropic::claude-opus-5"
+DEFAULT_MODEL_SONNET = "anthropic::claude-sonnet-5"
+DEFAULT_MODEL_HAIKU = "anthropic::claude-haiku-4-5-20251001"
 
 
 @dataclass
@@ -32,7 +32,7 @@ class ProviderSpec:
     api_key: str | None = None
 
     @classmethod
-    def from_dict(cls, d: dict) -> "ProviderSpec":
+    def from_dict(cls, d: dict) -> ProviderSpec:
         """从声明式配置构造。字段：
 
             alias        必填，provider 别名（用 别名::模型 引用）
@@ -136,7 +136,7 @@ class Settings:
 
     # ---- M1/M2 编排相关 ----
     # 调度（conductor）、usher、compaction 用便宜模型（Haiku）
-    director_model: str = DEFAULT_MODEL_HAIKU     # conductor 选人（历史名 director）
+    conductor_model: str = DEFAULT_MODEL_HAIKU    # conductor 选人
     usher_model: str = DEFAULT_MODEL_HAIKU        # M2：用户输入台口分流
     compaction_model: str = DEFAULT_MODEL_HAIKU
     # storyteller 是会话级重模型（低频、只在边界跑），默认用 Opus
@@ -156,7 +156,7 @@ class Settings:
     tg_log_level: str = "DEBUG"      # 转发阈值（DEBUG 含 storyteller/conductor/usher-escalate，不含 absorb=TRACE）
 
     @classmethod
-    def from_env(cls, dotenv_path: str | os.PathLike[str] | None = None) -> "Settings":
+    def from_env(cls, dotenv_path: str | os.PathLike[str] | None = None) -> Settings:
         if dotenv_path is not None:
             _load_dotenv(Path(dotenv_path))
         else:
@@ -191,9 +191,7 @@ class Settings:
             model_opus=os.environ.get("AICG_MODEL_OPUS", DEFAULT_MODEL_OPUS),
             model_sonnet=os.environ.get("AICG_MODEL_SONNET", DEFAULT_MODEL_SONNET),
             model_haiku=os.environ.get("AICG_MODEL_HAIKU", DEFAULT_MODEL_HAIKU),
-            director_model=os.environ.get(
-                "AICG_MODEL_CONDUCTOR", os.environ.get("AICG_MODEL_DIRECTOR", DEFAULT_MODEL_HAIKU)
-            ),
+            conductor_model=os.environ.get("AICG_MODEL_CONDUCTOR", DEFAULT_MODEL_HAIKU),
             usher_model=os.environ.get("AICG_MODEL_USHER", DEFAULT_MODEL_HAIKU),
             compaction_model=os.environ.get("AICG_MODEL_COMPACTION", DEFAULT_MODEL_HAIKU),
             storyteller_model=os.environ.get("AICG_MODEL_STORYTELLER", DEFAULT_MODEL_OPUS),

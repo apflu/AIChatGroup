@@ -13,16 +13,72 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
-# M1 Telegram 落地面；懒加载，仅 scripts/run_telegram.py 需要
+# M1 Telegram 落地面；懒加载，仅 Telegram 入口需要
 telegram = ["python-telegram-bot>=21"]
 # 其他 provider；均懒加载，配了对应 key 才需要
 openai = ["openai>=1.40"]        # 也覆盖所有 OpenAI 兼容端点
 gemini = ["google-genai>=0.3"]
 
+[project.scripts]
+aichatgroup-serve = "aichatgroup.runtime.telegram_app:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "import-linter>=2",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# prompts/*.md 是运行时读取的文本资产，打 wheel 必须带上（loader 靠 __file__ 定位）
+aichatgroup = ["prompts/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]   # 行长交给 formatter / 文档行；中文注释常超
+
+# ---- 分层依赖契约（docs/architecture.md §4）：lint-imports 强制，不靠人肉读文档 ----
+[tool.importlinter]
+root_package = "aichatgroup"
+
+[[tool.importlinter.contracts]]
+name = "domain 是纯数据内核：不 import 任何兄弟包"
+type = "forbidden"
+source_modules = ["aichatgroup.domain"]
+forbidden_modules = [
+    "aichatgroup.prompts", "aichatgroup.io", "aichatgroup.message", "aichatgroup.story",
+    "aichatgroup.runtime", "aichatgroup.config", "aichatgroup.presets",
+    "aichatgroup.observability", "aichatgroup.logging_setup",
+]
+
+[[tool.importlinter.contracts]]
+name = "message 与 story 互不直接 import（经 domain 数据通信、由 runtime 接线）"
+type = "independence"
+modules = ["aichatgroup.message", "aichatgroup.story"]
+
+[[tool.importlinter.contracts]]
+name = "runtime 在最上层：没有任何东西依赖它"
+type = "forbidden"
+source_modules = [
+    "aichatgroup.domain", "aichatgroup.prompts", "aichatgroup.io",
+    "aichatgroup.message", "aichatgroup.story", "aichatgroup.config", "aichatgroup.presets",
+]
+forbidden_modules = ["aichatgroup.runtime"]
+
+[[tool.importlinter.contracts]]
+name = "io 只依赖 domain 与横切基础设施，不依赖 message / story"
+type = "forbidden"
+source_modules = ["aichatgroup.io"]
+forbidden_modules = ["aichatgroup.message", "aichatgroup.story", "aichatgroup.presets"]

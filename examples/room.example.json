@@ -12,7 +12,7 @@
     {
       "id": "a1",
       "name": "小丸子",
-      "model_id": "clwd::claude-sonnet-5",
+      "model_id": "anthropic::claude-sonnet-5",
       "base_prompt": "你是酒馆常客。",
       "character_card": "活泼、话痨、爱起哄。",
       "pacing": { "base_pause_s": 1, "per_char_s": 0.33, "explicit_scale": 0.9 },
@@ -21,7 +21,7 @@
     {
       "id": "a2",
       "name": "阿福",
-      "model_id": "clwd::claude-opus-4-6",
+      "model_id": "anthropic::claude-opus-5",
       "base_prompt": "你是退役水手。",
       "character_card": "沉稳、爱讲道理、偶尔毒舌。",
       "secret_knowledge": "只有你知道：老陈年轻时是这片海最有名的走私头子，如今金盆洗手。别人问起他的过去，你会岔开话题。",
@@ -31,7 +31,7 @@
     {
       "id": "a3",
       "name": "小诗",
-      "model_id": "clwd::claude-sonnet-5",
+      "model_id": "anthropic::claude-sonnet-5",
       "base_prompt": "你是吟游诗人。",
       "character_card": "浪漫、爱接话、总想押韵。",
       "bot_token_env": "TG_TOKEN_CHAR_3"
