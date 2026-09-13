@@ -117,6 +117,12 @@ AI 侧永远照剧本演,不需要 live 抢占;真抢占只被用户输入触发
 > **对称**:storyteller 的"僵局时抛压力"与用户的"僵局时抛炸弹"是同一种动作 —— 一个排期、一个反应。
 > 两者汇进**同一个"打断 / 重规划"触发口**,Delivery 与 Conductor 不必区分炸弹来自谁。
 
+**落地(MVP)**:判断器就是 usher —— absorb = 附和,escalate = 关键打断,不另建模型调用。触发口是
+`Orchestrator.interrupt()` → `DeliveryQueue.abort()`(`message/delivery/queue.py`):清 pending、beat 代号 +1。
+演出侧 `perform_queue` 每条在节奏等待后、发送前核一次 beat 戳,过期即停;已开口者由旁白补一句"话说到一半"
+收尾。在飞的生成回来后凭旧戳整批作废(`beat_aborted stage=generate`)。重规划复用既有的 `user_forced`
+→ reseed 路径。被丢弃的气泡不入史、不回调——它们没发生过;半截回合不算"世界已回应"(清洗队列等下一个完整回合)。
+
 ## 8. 不变式(改动时必须守住)
 
 - **因果偏序不可违反**:若 `y` 依赖 `x`(回复 / 反应 / turn 内后继),演出顺序里 `x` 必在 `y` 前。

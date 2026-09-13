@@ -4,12 +4,14 @@
 
     摄入：transport.next_inbound → 指令分派 | 身份解析(players) → repo 入史 → usher 分流 → session
     发言：session 边界交接 → conductor 选人 → generator（prepare/complete/finish）
-          → delivery.perform（逐条投递、逐条经 repo 入史）→ 记忆合并 → 回应后清洗 → compaction
+          → delivery 队列（逐条投递、逐条经 repo 入史）→ 记忆合并 → 回应后清洗 → compaction
+    抢占：usher escalate = "关键打断" → `interrupt()`：清掉当前 beat 未发的气泡（在飞的生成跑完即弃），
+          同时 user_forced 让下一拍立刻 reseed 一段回应用户的会话（docs/message-ordering.md §7）
 
 各段的归属（见 docs/architecture.md）：
 - 会话状态机（seed/end/user_forced/清洗队列）在 `runtime/session.py`；
 - 内存近窗 + 持久层的一致写在 `io/persistence/room_repo.py`；
-- 生成在 `message/generator/turn.py`，演出在 `message/delivery/perform.py`；
+- 生成在 `message/generator/turn.py`，演出（含单消费者队列与抢占）在 `message/delivery/`；
 - 平台 reply 限制在各 transport 的 `can_reply_natively`。
 
 并发模型（要点）：
@@ -34,7 +36,7 @@ from ..io.persistence.store import Store
 from ..io.transport.base import InboundMessage, Transport
 from ..message.conductor.base import Conductor
 from ..message.conductor.end_detector import EndDetector
-from ..message.delivery.perform import perform_turn
+from ..message.delivery import DeliveryQueue, perform_queue
 from ..message.generator.parsing import ParsedBubble
 from ..message.generator.turn import finish_turn, merge_memory, prepare_turn
 from ..message.usher import Usher
@@ -98,6 +100,8 @@ class Orchestrator:
             storyteller or StubStoryteller(), end_detector or EndDetector(), self.repo, agents
         )
 
+        self.delivery = DeliveryQueue()              # 单消费者：只在循环线程里入队/出队/抢占
+
         self._running = False
         self._stop_event = asyncio.Event()
 
@@ -134,6 +138,16 @@ class Orchestrator:
     def request_stop(self) -> None:
         self._running = False
         self._stop_event.set()
+
+    def interrupt(self, reason: str = "user") -> int:
+        """打断 / 重规划的唯一触发口（用户关键打断、将来 storyteller 抛压力都走这里）。
+
+        清掉当前 beat 尚未发出的气泡；在飞的生成回来后凭 beat 戳自弃。返回丢弃的气泡数。
+        谁来规划下一拍不归它管——调用方另行置位（用户路径是 session.force_end）。
+        """
+        dropped = self.delivery.abort(reason=reason)
+        log_event("interrupt", reason=reason, dropped=dropped)
+        return dropped
 
     # ---- 摄入 ----------------------------------------------------------
     async def _ingest_loop(self) -> None:
@@ -176,8 +190,10 @@ class Orchestrator:
             self.request_stop()
 
     def _triage_user_input(self, msg: InboundMessage, speaker: str, msg_id: int) -> None:
-        """usher 台口分流：escalate → user_forced，让 speak 循环提前收束当前会话。
+        """usher 台口分流：escalate → 抢占当前 beat + user_forced，让 speak 循环立刻收束当前会话。
 
+        "附和 vs 关键打断"（message-ordering §7 的判断器）就是 usher 的 absorb / escalate 在
+        "要不要抢占"维度上的投影：absorb 不抢占，当前 beat 演完、下拍自然看到；escalate 抢占。
         误判只赔延迟不赔丢失——absorb 的输入已进历史，下个边界 storyteller 一定看到。
         speaker 是解析后的世界名（usher 也据世界身份判断，而非原始显示名）。
         canon 违规（decision.violation）额外把 msg_id 入队待清洗：世界回应后再抹去它，
@@ -187,6 +203,7 @@ class Orchestrator:
             return
         decision = self.usher.classify(self.room, msg.text, speaker=speaker)
         if decision.escalate:
+            self.interrupt(reason=f"usher:{decision.direction}")
             self.session.force_end(
                 ConversationEnd(reason=USER_FORCED, summary_hook=msg.text, direction=decision.direction),
                 redact_id=msg_id if decision.violation else None,
@@ -219,13 +236,14 @@ class Orchestrator:
                 agent = self._agent_by_id[speaker_id]
                 log_event("schedule", agent=agent.name, model=agent.model_id)
                 try:
-                    await self._speak(agent, self.session.hook)
+                    completed = await self._speak(agent, self.session.hook)
                 except Exception as exc:
                     # 单个 provider 抽风（鉴权失败/超时/限流）不应拖垮整屋子。
                     logger.exception("角色 %s 发言失败，跳过本回合", agent.name)
                     log_event("error", agent=agent.name, error=str(exc))
                 else:
-                    self.session.after_world_responded()
+                    if completed:                # 被抢占的半截回合不算"世界已回应"
+                        self.session.after_world_responded()
                 turns += 1
 
             end = self.session.observe_beat(spoke)
@@ -238,8 +256,10 @@ class Orchestrator:
                 await self._sleep(self.idle_poll_s)
         return turns
 
-    async def _speak(self, agent: Agent, conductor_instruction: str = "") -> None:
+    async def _speak(self, agent: Agent, conductor_instruction: str = "") -> bool:
+        """生成并演出一个回合。返回 True = 整个回合演完；False = 被抢占（生成期间或演出期间）。"""
         conv_id = self.session.ensure_row()
+        beat = self.delivery.beat                 # 本回合的 beat 戳：期间被抢占则产物作废
         # 1) 组装（循环线程内，只读 room；resolve 供超窗回复内联重注入）
         system, messages = prepare_turn(
             self.world, self.room, agent, conductor_instruction, resolve=self.repo.find
@@ -248,8 +268,10 @@ class Orchestrator:
         resp = await asyncio.to_thread(
             self.gateway.complete, system, messages, agent.model_id, self.max_tokens
         )
-        # 3) 解析 + 节奏（循环线程内）
+        # 3) 解析 + 节奏（循环线程内）；生成期间被抢占 → 整批作废（MVP：跑完再扔，不做取消）
         turn = finish_turn(agent, resp)
+        if not self.delivery.push(agent, turn.bubbles, turn.pauses, beat=beat):
+            return False
 
         # 4) 逐条演出；每条发出后立即入史（历史/持久化存完整 display，含动作括号）
         def _on_sent(pb: ParsedBubble, ext: str | None) -> None:
@@ -258,12 +280,16 @@ class Orchestrator:
                 external_id=ext, reply_to=pb.reply_to, conversation_id=conv_id,
             )
 
-        await perform_turn(self.transport, turn, self.room, sleep=self._sleep, on_sent=_on_sent)
+        sent = await perform_queue(
+            self.transport, self.delivery, self.room, sleep=self._sleep, on_sent=_on_sent
+        )
+        completed = sent == len(turn.bubbles)
 
-        # 5) 合并记忆增量（尾部私有快照，不缓存）
-        if turn.memory_delta:
+        # 5) 合并记忆增量（尾部私有快照，不缓存）。半截回合也合并：说出口的部分是真发生过的。
+        if turn.memory_delta and sent:
             merged = merge_memory(self.room.memory.get(agent.id, ""), turn.memory_delta)
             self.repo.save_memory(agent.id, merged)
+        return completed
 
     def _maybe_compact(self) -> None:
         if self.compaction_model_id is None:

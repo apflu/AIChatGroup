@@ -54,7 +54,7 @@ aichatgroup/
 │   │   ├── base.py  rule.py  model.py  end_detector.py
 │   ├── generator/         #   ✅ 一个 turn：prepare_turn → 模型 → finish_turn → GeneratedTurn（在线/离线同一份）
 │   │   ├── turn.py  parsing.py
-│   ├── delivery/          #   演出：微观时序 + 逐条投递（perform）；★队列、交错、抢占待建
+│   ├── delivery/          #   演出：微观时序 + 单消费者队列（queue，含抢占）+ 逐条投递（perform）；★交错待建
 │   │   ├── pacing.py  perform.py  [queue.py  interrupt.py]
 │   ├── prompt/            #   消息侧分层 prompt + 各层散文渲染
 │   │   └── builder.py
@@ -160,9 +160,9 @@ class BubbleGraph:
 | 项 | 落点 | 时机 |
 | --- | --- | --- |
 | ✅ `_speak` 复用 generator(消掉两份真相:prepare/finish_turn) | message/generator | 已落地 |
-| 拆宏观/微观两个钟到 conductor/delivery | 两个占位模块 | 现在 |
-| 偏序气泡队列(先全序,结构支持交错) | message/delivery/queue.py | 现在留位 |
-| 用户打断:判断器 + 抢占 | message/delivery/interrupt.py + conductor | 用户路径**必做**,可紧接队列 |
+| ✅ 拆宏观/微观两个钟到 conductor/delivery | 宏观 `turn_interval_s` 在 orchestrator 循环,微观 pause 在 delivery/pacing | 已落地 |
+| ✅ 偏序气泡队列(先全序,结构支持交错) | message/delivery/queue.py(`DeliveryQueue`,beat 戳) | 全序已落地;偏序边留位 |
+| ✅ 用户打断:判断器 + 抢占 | 判断器 = usher escalate;触发口 `Orchestrator.interrupt()` → `DeliveryQueue.abort()` | 已落地(message-ordering §7) |
 | AI 剧本化交错/打断 | conductor 作者 edges | 后置(填进已就位的接缝) |
 | ✅ storyteller 会话边界播种意图 → conductor_instruction 尾部注入 | story/storyteller + message/prompt | M2 已落地 |
 | 高级 marker 词表 | domain/markers | 随 delivery 一起长 |

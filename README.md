@@ -5,7 +5,7 @@
 后续支持 FoundryVTT。架构与分层见 [docs/architecture.md](docs/architecture.md)，
 里程碑见 [docs/milestone/](docs/milestone/)。
 
-当前进度：M3 知识隔离（进行中，见路线图）。M1 的 Telegram 多 bot 群聊已实机验证；M2 的
+当前进度：M3 知识隔离已收口，用户打断（抢占）已落地（见路线图）。M1 的 Telegram 多 bot 群聊已实机验证；M2 的
 storyteller / usher / 会话状态机已落地。M0 骨架（Model Gateway / 分层 Prompt Builder /
 单角色单调用多气泡 + 记忆增量）继续沿用。
 
@@ -53,7 +53,7 @@ uv run aichatgroup-serve --preset examples/room.example.json
 | `prompts/` | **整段 prompt 文本资产**（复数）：system + user 模板 + 世界/尾部/人设片段（`*.system.md`/`*.user.md`/`world.md`/`tail_*.md`/`persona.md`…），运行时数据用 `$slot` 回填（`render()`）。散文集中、便于手改、字面 `{{marker}}`/`{json}` 无需转义。机器契约（marker 值/`DIRECTIONS`/`none`/MockGateway 认角色正则）仍是代码常量、留解析器身边 |
 | `message/conductor/` | 编导（Conductor）：`rule.py`（RoundRobin，离线）、`model.py`（`ModelConductor`，便宜模型决定谁说话）、`end_detector.py`（M2 会话结束检测 + `TensionReader`） |
 | `message/generator/` | 生成回合（**在线/离线同一份真相**）：`turn.py`（`prepare_turn` → 模型 → `finish_turn` → `GeneratedTurn`；`run_turn` 离线就地应用）、`parsing.py`（多气泡+记忆增量） |
-| `message/delivery/` | 演出：`pacing.py`（气泡节奏）、`perform.py`（逐条投递：举动交旁白、神态隐去、台词走角色出口；回复寻址经 transport 的 `can_reply_natively`）；后续加交错队列 + 抢占 |
+| `message/delivery/` | 演出：`pacing.py`（气泡节奏）、`queue.py`（单消费者气泡队列 + 抢占，beat 戳）、`perform.py`（逐条投递：举动交旁白、神态隐去、台词走角色出口；回复寻址经 transport 的 `can_reply_natively`）；交错留位 |
 | `message/prompt/` | `builder.py`：分层 Prompt **组装逻辑**（单数）+ 显式 `cache_control` 断点 + 各层散文渲染（`render_world`/`render_layer1`/`render_persona`；散文取自 `prompts/`） |
 | `message/usher/` | M2：用户输入台口分流（absorb / `user_forced`），判据"世界要不要回应" |
 | `story/storyteller/` | M2：会话级编导，会话边界播种 `ConversationIntent`；`StubStoryteller`（零模型骨架）/ `ModelStoryteller`（重模型） |
@@ -182,6 +182,10 @@ fuzz 测试守护。用 `{{…}}` 而非 `<<…>>`：尖括号诱发「XML 要�
 - ~~**M2** Storyteller（会话级编导，会话边界事件驱动播种意图）+ Usher（用户输入台口分流）+ 会话状态机
   + 结束检测（lull/deadlock/intent_fulfilled/user_forced/max_length）+ `conversations` 持久化 + 记忆去重~~ ✅
   （详见 [docs/milestone/M2.md](docs/milestone/M2.md)）
-- **M3** 知识隔离（进行中）：可见性接缝（`build_prompt` per-message 过滤）+ Usher 回应后清洗
-  （违规输入待世界回应后软删除，斩断 M2 §9 的污染放大链）+ per-agent 世界秘密骨架
-  （详见 [docs/milestone/M3.md](docs/milestone/M3.md)）。 **M4** 世界书生成 + RAG。 **M5** FoundryVTT 支持。
+- ~~**M3** 知识隔离：可见性接缝（`build_prompt` per-message 过滤）+ Usher 回应后清洗
+  （违规输入待世界回应后软删除，斩断 M2 §9 的污染放大链）+ per-agent 世界秘密骨架~~ ✅
+  （详见 [docs/milestone/M3.md](docs/milestone/M3.md)；per-event 可见性接缝按设计休眠）
+- ~~**用户打断（抢占）**：usher escalate 即"关键打断" → 清掉当前 beat 未发的气泡、在飞的生成作废、
+  下一拍立刻回应用户（单消费者队列 `message/delivery/queue.py`）~~ ✅
+  （详见 [docs/message-ordering.md](docs/message-ordering.md) §7）
+- **M4** 世界书生成 + RAG。 **M5** FoundryVTT 支持。
