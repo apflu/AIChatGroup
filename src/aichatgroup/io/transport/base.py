@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from ...domain.types import Agent
+from ...domain.types import Agent, Message
 
 
 @dataclass
@@ -33,7 +33,7 @@ class InboundMessage:
     # 若这条是「回复某条消息」，被回复消息的 external_id（如 telegram chat:msgid）
     reply_to_external_id: str | None = None
     # 发送者的**稳定**外部 id（如 telegram from_user.id）+ 渠道，用于解析世界身份（PlayerRegistry）。
-    # speaker 是显示名（会变），sender_id 才是身份锚点。
+    # speaker 是显示名（会变），sender_id 才是身份锚点。channel 由 transport 填（它知道自己是谁）。
     sender_id: str | None = None
     channel: str = ""
 
@@ -84,5 +84,13 @@ class Transport(Protocol):
 
         用途：开发期把结构化事件（storyteller 播种 / conductor fire / usher 升级…）
         转发到群里看（见 runtime/log_relay.py）。Telegram 里由 observer bot（bot 0）代发。
+        """
+        ...
+
+    def can_reply_natively(self, agent: Agent, target: Message) -> bool:
+        """该角色能否在平台上**原生** reply 这条消息（挂 reply_to_external_id）。
+
+        平台限制属于 transport（如 Telegram：bot 只能 reply 人类或自己的消息，不能 reply 另一个
+        bot）。返回 False 时 delivery 不挂原生 reply，回复关系仍由 builder 内联引用 + reply_to_id 承载。
         """
         ...

@@ -1,6 +1,14 @@
 """Transport 层：核心引擎与外部世界（Telegram / Foundry / 测试）的收发边界。"""
 from .base import BotProfile, InboundMessage, Transport
 from .memory import InMemoryTransport
-from .telegram import TelegramTransport  # 构造时才懒加载 python-telegram-bot
+from .telegram import (  # 构造时才懒加载 python-telegram-bot
+    TelegramConfig,
+    TelegramTransport,
+    build_telegram_transport,
+    telegram_reply_policy,
+)
 
-__all__ = ["BotProfile", "InboundMessage", "Transport", "InMemoryTransport", "TelegramTransport"]
+__all__ = [
+    "BotProfile", "InboundMessage", "Transport", "InMemoryTransport",
+    "TelegramConfig", "TelegramTransport", "build_telegram_transport", "telegram_reply_policy",
+]

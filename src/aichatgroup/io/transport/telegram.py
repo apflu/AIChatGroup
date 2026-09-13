@@ -13,15 +13,64 @@
 - 观察者 bot：否则只收命令、收不到群里普通消息（摄入必需）。
 - 角色 bot：privacy on 时该 bot 对群里非自己发的消息"不可见"，`reply_to_message_id` 指向人类消息会
   报 "message to be replied not found"。关掉后才能原生 reply 人类消息。
-  （bot 之间互 reply 是 telegram 硬限制，关 privacy 也不行——见 orchestrator._speak 的 native_reply 判断。）
+  （bot 之间互 reply 是 telegram 硬限制，关 privacy 也不行——见本模块 telegram_reply_policy。）
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass, field
 
-from ...domain.types import Agent
+from ...domain.commands import CONTROL_COMMANDS, IAM, command_word
+from ...domain.types import Agent, Message
 from .base import BotProfile, InboundMessage
+
+CHANNEL = "telegram"
+
+
+@dataclass
+class TelegramConfig:
+    """Telegram 落地面的配置：从预设的 `transports.telegram` 段 + 角色卡 `bot_token(_env)` 读出。"""
+
+    observer_token: str | None = None
+    chat_id: str | None = None
+    agent_tokens: dict[str, str] = field(default_factory=dict)   # agent_id → token（未配的不在里面）
+
+    @classmethod
+    def from_preset(cls, preset) -> TelegramConfig:
+        """preset 需有 `transports` / `agent_options`（见 presets.RoomPreset）；*_env 已由加载器解析。"""
+        section = preset.transports.get(CHANNEL, {})
+        tokens = {
+            aid: opts["bot_token"]
+            for aid, opts in preset.agent_options.items()
+            if opts.get("bot_token")
+        }
+        chat_id = section.get("chat_id")
+        return cls(
+            observer_token=section.get("observer_token"),
+            chat_id=str(chat_id) if chat_id is not None else None,
+            agent_tokens=tokens,
+        )
+
+    @property
+    def complete(self) -> bool:
+        return bool(self.observer_token and self.chat_id)
+
+
+def build_telegram_transport(preset) -> TelegramTransport:
+    """从预设装配 TelegramTransport（懒加载 python-telegram-bot）。缺观察者 token / chat_id 抛 RuntimeError。"""
+    cfg = TelegramConfig.from_preset(preset)
+    if not cfg.complete:
+        raise RuntimeError("预设缺少 Telegram 观察者 token 或 chat_id（检查 .env 与 *_env 配置）。")
+    # 启动时把角色名同步成 bot 展示名（头像预留 None，Bot API 暂不支持编程设置）
+    profiles = {a.id: BotProfile(name=a.name) for a in preset.agents}
+    return TelegramTransport(cfg.observer_token, cfg.chat_id, cfg.agent_tokens, agent_profiles=profiles)
+
+
+def telegram_reply_policy(agent: Agent, target: Message) -> bool:
+    """Telegram 原生 reply 的硬限制：角色 bot 只能 reply **人类消息**（需该 bot 已关 privacy mode）
+    或**自己发的**消息；reply 另一个角色 bot 的消息是平台硬限制、关 privacy 也不行。"""
+    return target.author_kind == "human" or target.speaker == agent.name
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +83,7 @@ class TelegramTransport:
         agent_tokens: dict[str, str],
         *,
         agent_profiles: dict[str, BotProfile] | None = None,
-        command_prefixes: tuple[str, ...] = ("/pause", "/resume", "/status", "/stop"),
+        command_prefixes: tuple[str, ...] = CONTROL_COMMANDS + (IAM,),
     ) -> None:
         self.observer_token = observer_token
         self.chat_id = int(chat_id)
@@ -69,14 +118,14 @@ class TelegramTransport:
         sender = (msg.from_user.full_name if msg.from_user else None) or "匿名"
         sender_id = str(msg.from_user.id) if msg.from_user else None   # 稳定用户 id → 世界身份锚点
         external_id = f"{msg.chat_id}:{msg.message_id}"
-        is_command = text.strip().split(" ", 1)[0].lower() in self.command_prefixes
+        is_command = command_word(text) in self.command_prefixes
         reply = msg.reply_to_message
         reply_ext = f"{msg.chat_id}:{reply.message_id}" if reply is not None else None
         self._inbound.put_nowait(
             InboundMessage(
                 speaker=sender, text=text, external_id=external_id,
                 is_command=is_command, reply_to_external_id=reply_ext,
-                sender_id=sender_id, channel="telegram",
+                sender_id=sender_id, channel=CHANNEL,
             )
         )
 
@@ -170,6 +219,9 @@ class TelegramTransport:
                     return None
             logger.warning("send_text(%s) 失败：%s", agent.name, exc)
             return None
+
+    def can_reply_natively(self, agent: Agent, target: Message) -> bool:
+        return telegram_reply_policy(agent, target)
 
     async def send_system(self, text: str) -> None:
         """用 observer bot（bot 0）往群里发一条系统/旁白消息（开发日志转发用）。

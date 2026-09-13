@@ -1,6 +1,7 @@
-"""Preset 加载：世界书 / 角色卡 / 房间种子 / telegram *_env 解析。"""
+"""Preset 加载：世界书 / 角色卡 / 房间种子 / transport 段与 *_env 解析（telegram 由其 transport 自取）。"""
 import json
 
+from aichatgroup.io.transport.telegram import TelegramConfig
 from aichatgroup.presets import load_preset
 
 
@@ -42,11 +43,16 @@ def test_load_preset_builds_domain_objects(tmp_path, monkeypatch):
     # a2 无 pacing → 默认
     assert preset.agents[1].pacing.base_pause_s == 0.4
 
-    # telegram *_env 从环境解析
-    assert preset.telegram.observer_token == "obs-token"
-    assert preset.telegram.chat_id == "-100123"
-    assert preset.telegram.agents["a1"].bot_token == "a1-token"
-    assert preset.telegram.agents["a2"].bot_token is None  # 未配置 → None
+    # 平台段原样保留、*_env 从环境解析；引擎不认识的角色键进 agent_options
+    assert preset.transports["telegram"] == {"observer_token": "obs-token", "chat_id": "-100123"}
+    assert preset.agent_options["a1"] == {"bot_token": "a1-token"}
+    assert preset.agent_options["a2"] == {}
+    # telegram transport 自己从预设里取它要的
+    tg = TelegramConfig.from_preset(preset)
+    assert tg.observer_token == "obs-token"
+    assert tg.chat_id == "-100123"
+    assert tg.agent_tokens == {"a1": "a1-token"}        # a2 未配置 → 不在里面
+    assert tg.complete
 
 
 def test_missing_env_tokens_are_none(tmp_path):
@@ -56,5 +62,28 @@ def test_missing_env_tokens_are_none(tmp_path):
     }
     preset = load_preset(_write(tmp_path, data))
     assert preset.room_key == "default"
-    assert preset.telegram.observer_token is None
-    assert preset.telegram.agents["a1"].bot_token is None
+    assert preset.agent_options["a1"] == {"bot_token": None}
+    tg = TelegramConfig.from_preset(preset)
+    assert tg.observer_token is None
+    assert tg.agent_tokens == {}
+    assert not tg.complete
+
+
+def test_transports_block_and_generic_players(tmp_path, monkeypatch):
+    # 新式：transports.<name> 段 + players 用 channel/external_id（不再绑 telegram）
+    monkeypatch.setenv("PL_X", "42")
+    data = {
+        "world": {"bible": "x"},
+        "agents": [{"id": "a1", "name": "n", "model_id": "m", "bot_token": "direct-token"}],
+        "transports": {"telegram": {"observer_token_env": "NOPE", "chat_id": -1}},
+        "players": [
+            {"name": "旅人", "channel": "foundry", "external_id_env": "PL_X"},
+            {"name": "旧式", "telegram_id": 7},
+        ],
+    }
+    preset = load_preset(_write(tmp_path, data))
+    assert preset.transports["telegram"] == {"observer_token": None, "chat_id": -1}
+    assert TelegramConfig.from_preset(preset).chat_id == "-1"
+    assert TelegramConfig.from_preset(preset).agent_tokens == {"a1": "direct-token"}
+    assert (preset.players[0].channel, preset.players[0].external_id) == ("foundry", "42")
+    assert (preset.players[1].channel, preset.players[1].external_id) == ("telegram", "7")

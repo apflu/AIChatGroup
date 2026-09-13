@@ -6,13 +6,21 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 
-from ...domain.types import Agent
+from ...domain.types import Agent, Message
 from .base import InboundMessage
+
+CHANNEL = "memory"
 
 
 class InMemoryTransport:
-    def __init__(self) -> None:
+    def __init__(
+        self, reply_policy: Callable[[Agent, Message], bool] | None = None
+    ) -> None:
+        # 原生 reply 策略：内存无平台限制（默认恒 True）；测试想模拟某平台的限制时注入其策略函数
+        # （如 io.transport.telegram.telegram_reply_policy）。
+        self._reply_policy = reply_policy
         self._inbound: asyncio.Queue[InboundMessage] = asyncio.Queue()
         # 发送记录：(agent_id, text)，按实际发出顺序（保持简单形状，供既有断言）
         self.sent: list[tuple[str, str]] = []
@@ -32,7 +40,9 @@ class InMemoryTransport:
         self.stopped = True
 
     def feed(self, msg: InboundMessage) -> None:
-        """从外部注入一条摄入消息（测试里模拟人类 PL 说话 / 发指令）。"""
+        """从外部注入一条摄入消息（测试里模拟人类 PL 说话 / 发指令）。channel 缺省填本 transport 的。"""
+        if not msg.channel:
+            msg.channel = CHANNEL
         self._inbound.put_nowait(msg)
 
     async def next_inbound(self) -> InboundMessage:
@@ -54,3 +64,6 @@ class InMemoryTransport:
 
     async def send_system(self, text: str) -> None:
         self.system_sent.append(text)
+
+    def can_reply_natively(self, agent: Agent, target: Message) -> bool:
+        return True if self._reply_policy is None else self._reply_policy(agent, target)

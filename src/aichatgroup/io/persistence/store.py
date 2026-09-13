@@ -9,9 +9,33 @@ external_id 上的唯一约束保证共享历史里每条外部消息只进一�
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import dataclass
 from pathlib import Path
 
 from ...domain.types import ContentPart, Message, RoomState
+
+
+@dataclass(frozen=True)
+class ConversationRow:
+    """conversations 表的一行（M2 会话）。"""
+
+    id: int
+    room_id: int
+    kind: str
+    hook: str
+    end_reason: str | None
+    tension: float
+    summary: str
+
+
+@dataclass(frozen=True)
+class PlayerRow:
+    """players 表的一行（玩家世界身份）。"""
+
+    channel: str
+    external_id: str
+    name: str
+    persona: str
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS rooms (
@@ -237,22 +261,29 @@ class Store:
         )
         self.conn.commit()
 
-    def get_conversation(self, conversation_id: int) -> dict | None:
+    @staticmethod
+    def _row_to_conversation(r) -> ConversationRow:
+        return ConversationRow(
+            id=int(r["id"]), room_id=int(r["room_id"]), kind=r["kind"], hook=r["hook"],
+            end_reason=r["end_reason"], tension=float(r["tension"]), summary=r["summary"],
+        )
+
+    def get_conversation(self, conversation_id: int) -> ConversationRow | None:
         r = self.conn.execute(
             "SELECT id, room_id, kind, hook, end_reason, tension, summary "
             "FROM conversations WHERE id = ?",
             (conversation_id,),
         ).fetchone()
-        return dict(r) if r is not None else None
+        return self._row_to_conversation(r) if r is not None else None
 
-    def recent_conversations(self, room_id: int, limit: int = 5) -> list[dict]:
+    def recent_conversations(self, room_id: int, limit: int = 5) -> list[ConversationRow]:
         """最近 limit 段会话（最新在前），供 storyteller 记忆播种连贯的下一段。"""
         rows = self.conn.execute(
             "SELECT id, room_id, kind, hook, end_reason, tension, summary "
             "FROM conversations WHERE room_id = ? ORDER BY id DESC LIMIT ?",
             (room_id, limit),
         ).fetchall()
-        return [dict(r) for r in rows]
+        return [self._row_to_conversation(r) for r in rows]
 
     def count_conversations(self, room_id: int) -> int:
         row = self.conn.execute(
@@ -274,12 +305,18 @@ class Store:
         )
         self.conn.commit()
 
-    def list_players(self, room_id: int) -> list[dict]:
+    def list_players(self, room_id: int) -> list[PlayerRow]:
         rows = self.conn.execute(
             "SELECT channel, external_id, name, persona FROM players WHERE room_id = ?",
             (room_id,),
         ).fetchall()
-        return [dict(r) for r in rows]
+        return [
+            PlayerRow(
+                channel=r["channel"], external_id=r["external_id"],
+                name=r["name"], persona=r["persona"],
+            )
+            for r in rows
+        ]
 
     # ---- memory --------------------------------------------------------
     def save_memory(self, room_id: int, agent_id: str, content: str) -> None:

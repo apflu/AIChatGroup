@@ -16,11 +16,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from aichatgroup.config import Settings
+from aichatgroup.io.transport.telegram import TelegramConfig
 from aichatgroup.presets import load_preset
 
 
@@ -86,7 +84,7 @@ async def _run(preset_path: str, poll: bool, env_path: str) -> int:
     Settings.from_env(env_path)
 
     preset = load_preset(preset_path)
-    tg = preset.telegram
+    tg = TelegramConfig.from_preset(preset)
     if not tg.chat_id:
         print("预设/环境里缺少 chat_id。", file=sys.stderr)
         return 2
@@ -99,12 +97,12 @@ async def _run(preset_path: str, poll: bool, env_path: str) -> int:
     ok = True
     print("角色 bot 发送：")
     for agent in preset.agents:
-        at = tg.agents.get(agent.id)
-        if not at or not at.bot_token:
+        token = tg.agent_tokens.get(agent.id)
+        if not token:
             print(f"  · {agent.name}: 未配置 bot token（跳过）")
             ok = False
             continue
-        ok &= await _check_agent_bot(Bot, at.bot_token, chat_id, agent.name)
+        ok &= await _check_agent_bot(Bot, token, chat_id, agent.name)
 
     print("观察者 bot：")
     if tg.observer_token:

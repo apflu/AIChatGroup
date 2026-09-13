@@ -2,8 +2,13 @@
 
 一个 JSON 文件描述一个群聊房间：世界书、房间种子（长期摘要/客观关系）、
 以及一组角色（含 RisuAI 式层级：base_prompt → character_card、每角色 model_id
-与 PacingConfig）。Telegram 相关（每角色 bot token、观察者 token、群 chat_id）
-以 *_env 形式给出环境变量名，加载时从 os.environ 解析，token 不落进版本库。
+与 PacingConfig）。
+
+**预设格式是 transport 无关的**：平台相关的段落原样保留为 `transports[<name>]`（如
+`transports.telegram` / 旧式顶层 `telegram`），角色卡里引擎不认识的键原样保留为
+`agent_options[agent_id]`（如 `bot_token_env`）。各 transport 自己从这两处读它要的东西
+（见 io/transport/telegram.py::TelegramConfig.from_preset）。凡以 `_env` 结尾的键，加载时从
+os.environ 解析成同名（去后缀）的值——token 不落进版本库。
 
 世界书/角色卡是**文件**而非数据库（见计划数据模型注）；SQLite 只存可变会话状态。
 """
@@ -17,27 +22,22 @@ from pathlib import Path
 from .config import ProviderSpec
 from .domain.types import Agent, PacingConfig, WorldBook
 
-
-@dataclass
-class AgentTelegram:
-    agent_id: str
-    bot_token: str | None  # 从 *_env 解析；缺失为 None（离线时允许）
-
-
-@dataclass
-class TelegramConfig:
-    observer_token: str | None = None
-    chat_id: str | None = None
-    agents: dict[str, AgentTelegram] = field(default_factory=dict)
+# 角色卡里引擎自己消费的键；其余原样进 agent_options（各 transport 自取）
+_AGENT_CORE_KEYS = frozenset({
+    "id", "name", "model_id", "base_prompt", "character_card", "secret_knowledge", "pacing",
+})
+_PACING_KEYS = frozenset({
+    "base_pause_s", "per_char_s", "min_pause_s", "max_pause_s", "explicit_scale",
+})
 
 
 @dataclass
 class PresetPlayer:
-    """预设预登记的玩家：把稳定外部 id（直填 telegram_id 或 *_env 指向环境变量）绑到世界名+人设。"""
+    """预设预登记的玩家：把稳定外部 id（直填或 *_env 指向环境变量）绑到世界名+人设。"""
 
     name: str
     persona: str = ""
-    channel: str = "telegram"
+    channel: str = ""
     external_id: str = ""          # 缺失（未配 id）则加载时留空，seed 时跳过
 
 
@@ -48,23 +48,46 @@ class RoomPreset:
     agents: list[Agent]
     seed_summary: str = ""
     seed_relations: str = ""
-    telegram: TelegramConfig = field(default_factory=TelegramConfig)
     players: list[PresetPlayer] = field(default_factory=list)
     # 预设可自带 provider 定义（声明式；与全局 providers.json / env 合并）
     providers: list[ProviderSpec] = field(default_factory=list)
+    # 平台段落（原样 + *_env 已解析）：transports["telegram"] = {"observer_token": ..., "chat_id": ...}
+    transports: dict[str, dict] = field(default_factory=dict)
+    # 角色卡里引擎不认识的键（原样 + *_env 已解析）：agent_options["a1"] = {"bot_token": ...}
+    agent_options: dict[str, dict] = field(default_factory=dict)
 
 
-def _resolve_env(name: str | None) -> str | None:
-    return os.environ.get(name) if name else None
+def resolve_env_keys(raw: dict) -> dict:
+    """把 `{"x_env": "VAR"}` 解析成 `{"x": os.environ["VAR"]}`（未设则 None）；其余键原样。
+    显式给的 `x` 优先于 `x_env`。"""
+    out: dict = {}
+    for k, v in raw.items():
+        if k.endswith("_env"):
+            base = k[: -len("_env")]
+            if base not in raw:
+                out[base] = os.environ.get(v) if v else None
+        else:
+            out[k] = v
+    return out
 
 
 def _build_pacing(raw: dict | None) -> PacingConfig:
     if not raw:
         return PacingConfig()
-    fields = {
-        "base_pause_s", "per_char_s", "min_pause_s", "max_pause_s", "explicit_scale",
-    }
-    return PacingConfig(**{k: v for k, v in raw.items() if k in fields})
+    return PacingConfig(**{k: v for k, v in raw.items() if k in _PACING_KEYS})
+
+
+def _load_player(pl: dict) -> PresetPlayer:
+    # 旧式 telegram_id / telegram_id_env 隐含 channel=telegram；新式 external_id(_env) + channel
+    if "telegram_id" in pl or "telegram_id_env" in pl:
+        ext = os.environ.get(pl["telegram_id_env"]) if pl.get("telegram_id_env") else None
+        ext = ext or str(pl.get("telegram_id", "") or "")
+        channel = pl.get("channel", "telegram")
+    else:
+        ext = os.environ.get(pl["external_id_env"]) if pl.get("external_id_env") else None
+        ext = ext or str(pl.get("external_id", "") or "")
+        channel = pl.get("channel", "")
+    return PresetPlayer(name=pl["name"], persona=pl.get("persona", ""), channel=channel, external_id=ext)
 
 
 def load_preset(path: str | os.PathLike[str]) -> RoomPreset:
@@ -77,7 +100,7 @@ def load_preset(path: str | os.PathLike[str]) -> RoomPreset:
     room_seed = data.get("room", {})
 
     agents: list[Agent] = []
-    tg_agents: dict[str, AgentTelegram] = {}
+    agent_options: dict[str, dict] = {}
     for a in data["agents"]:
         agents.append(
             Agent(
@@ -90,29 +113,18 @@ def load_preset(path: str | os.PathLike[str]) -> RoomPreset:
                 pacing=_build_pacing(a.get("pacing")),
             )
         )
-        tg_agents[a["id"]] = AgentTelegram(
-            agent_id=a["id"],
-            bot_token=_resolve_env(a.get("bot_token_env")),
-        )
+        extras = {k: v for k, v in a.items() if k not in _AGENT_CORE_KEYS}
+        agent_options[a["id"]] = resolve_env_keys(extras)
 
-    tg_raw = data.get("telegram", {})
-    telegram = TelegramConfig(
-        observer_token=_resolve_env(tg_raw.get("observer_token_env")),
-        chat_id=_resolve_env(tg_raw.get("chat_id_env")) or tg_raw.get("chat_id"),
-        agents=tg_agents,
-    )
+    transports = {
+        name: resolve_env_keys(section or {})
+        for name, section in (data.get("transports") or {}).items()
+    }
+    if "telegram" in data and "telegram" not in transports:     # 旧式顶层 telegram 块
+        transports["telegram"] = resolve_env_keys(data["telegram"] or {})
 
     providers = [ProviderSpec.from_dict(x) for x in data.get("providers", [])]
-
-    players: list[PresetPlayer] = []
-    for pl in data.get("players", []):
-        ext = _resolve_env(pl.get("telegram_id_env")) or str(pl.get("telegram_id", "")) or ""
-        players.append(PresetPlayer(
-            name=pl["name"],
-            persona=pl.get("persona", ""),
-            channel=pl.get("channel", "telegram"),
-            external_id=ext,
-        ))
+    players = [_load_player(pl) for pl in data.get("players", [])]
 
     return RoomPreset(
         room_key=data.get("room_key", "default"),
@@ -120,7 +132,8 @@ def load_preset(path: str | os.PathLike[str]) -> RoomPreset:
         agents=agents,
         seed_summary=room_seed.get("long_term_summary", ""),
         seed_relations=room_seed.get("objective_relations", ""),
-        telegram=telegram,
         players=players,
         providers=providers,
+        transports=transports,
+        agent_options=agent_options,
     )

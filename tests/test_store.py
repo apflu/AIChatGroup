@@ -78,7 +78,7 @@ def test_reply_to_roundtrip_and_lookups():
     s = _store()
     rid = s.ensure_room("r1")
     a = s.append_message(rid, "小丸子", "我请客！", external_id="c:10")
-    b = s.append_message(rid, "阿福", "那我不客气了", reply_to_id=a)
+    s.append_message(rid, "阿福", "那我不客气了", reply_to_id=a)
     hist = s.load_history(rid)
     assert hist[1].reply_to == a                       # reply_to_id 落列并下发
     assert hist[0].meta["external_id"] == "c:10"        # external_id 下发到 meta
@@ -113,13 +113,13 @@ def test_conversation_lifecycle():
     ).fetchone()
     assert row["conversation_id"] == cid
     # 未收束时 end_reason 为空
-    assert s.get_conversation(cid)["end_reason"] is None
+    assert s.get_conversation(cid).end_reason is None
     # 收束
     s.end_conversation(cid, reason="lull", tension=0.3, summary="没人接话")
     conv = s.get_conversation(cid)
-    assert conv["end_reason"] == "lull"
-    assert conv["tension"] == 0.3
-    assert conv["summary"] == "没人接话"
+    assert conv.end_reason == "lull"
+    assert conv.tension == 0.3
+    assert conv.summary == "没人接话"
 
 
 def test_recent_conversations_newest_first():
@@ -128,7 +128,7 @@ def test_recent_conversations_newest_first():
     c1 = s.start_conversation(rid, kind="chitchat")
     c2 = s.start_conversation(rid, kind="develop_plot")
     recent = s.recent_conversations(rid, limit=5)
-    assert [c["id"] for c in recent] == [c2, c1]   # 最新在前
+    assert [c.id for c in recent] == [c2, c1]   # 最新在前
 
 
 def test_redact_message_soft_deletes_via_flag():

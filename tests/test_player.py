@@ -1,9 +1,8 @@
 """玩家身份：净化、注册表（解析/注册/软查重/预登记）、store 往返、渲染 tag。"""
 import pytest
 
-from aichatgroup.domain import Message, ContentPart, sanitize_player_name
-from aichatgroup.domain.player import Player, STRANGER_NAME
-from aichatgroup.io.persistence import Store
+from aichatgroup.domain import ContentPart, Message, sanitize_player_name
+from aichatgroup.io.persistence import PlayerRow, Store
 from aichatgroup.runtime.players import PlayerRegistry
 
 
@@ -82,12 +81,12 @@ def test_store_players_roundtrip_scoped_by_room():
     s.upsert_player(r1, "telegram", "1", "银发旅人", "雇佣兵")
     s.upsert_player(r2, "telegram", "1", "别的世界的同一人", "")  # 同 id 不同世界，互不干扰
     assert s.list_players(r1) == [
-        {"channel": "telegram", "external_id": "1", "name": "银发旅人", "persona": "雇佣兵"}
+        PlayerRow(channel="telegram", external_id="1", name="银发旅人", persona="雇佣兵")
     ]
-    assert s.list_players(r2)[0]["name"] == "别的世界的同一人"
+    assert s.list_players(r2)[0].name == "别的世界的同一人"
     # upsert 改名
     s.upsert_player(r1, "telegram", "1", "王师傅", "雇佣兵")
-    assert s.list_players(r1)[0]["name"] == "王师傅"
+    assert s.list_players(r1)[0].name == "王师傅"
 
 
 def test_registry_loads_from_store():
@@ -98,7 +97,7 @@ def test_registry_loads_from_store():
     assert reg.resolve("telegram", "7").name == "小酒鬼"
     # 注册也落库
     reg.register("telegram", "8", "路灯")
-    assert any(p["name"] == "路灯" for p in s.list_players(rid))
+    assert any(p.name == "路灯" for p in s.list_players(rid))
 
 
 # ---- 渲染 tag --------------------------------------------------------
