@@ -123,15 +123,31 @@ deepseek::deepseek-chat         # deepseek 是自定义的兼容端点别名
 ```
 system:
   [第0层 世界观圣经 + 群聊规则]        ← cache breakpoint 1
-  [第1层 长期摘要 + 客观关系图谱]      ← cache breakpoint 2
+  [第1层 前情提要 + 客观关系图谱 + 在场玩家]  ← cache breakpoint 2
 messages:
   [第2层 共享历史，逐条 user 消息，append-only]
       └─ 最后一条历史消息            ← 滚动 cache breakpoint 3
-  [第3层尾部 人设 + 私有记忆 + 导演指令 + 输出契约]  ← 不缓存
+  [第3层尾部 人设 + 独知 + 私有记忆 + 编导指令 + 输出契约]  ← 不缓存
 ```
 
 共享块前置、人设沉尾，使 `system + 历史` 前缀对所有 Agent 逐字节相同 → 命中同一缓存条目。
 硬规则：永远不让一个模型生成不归它管的角色内容。
+
+### 手动调 prompt 的工作流
+
+散文全在 `src/aichatgroup/prompts/<段>/*.md`（jinja2，变量 `${slot}`），代码只喂数据。
+
+```bash
+uv run scripts/dump_prompt.py --preset preset/room.json --agent a2 --hook "有人在门口徘徊"  # 看该角色此刻收到的完整 prompt
+uv run scripts/dump_prompt.py --preset preset/room.json --db data.db     # 带库里的近窗历史/记忆/独知
+uv run scripts/dump_prompt.py --cheap                                    # 四个便宜模型的 system 指令
+uv run pytest tests/test_prompt_golden.py                                # 改完 .md：diff 显示模型输入变了哪几行
+UPDATE_GOLDEN=1 uv run pytest tests/test_prompt_golden.py                # 确认无误后接受快照
+```
+
+私有世界不必改包：预设里写 `"prompts_dir": "prompts"`（相对预设文件），该目录下同名相对路径的
+`.md`（如 `role/output_contract.md`、`usher/system.md`）优先于包内；没覆盖的照常走包内。
+`dump_prompt.py --prompts-dir …` 可以先试一份覆盖散文再写进预设。
 
 ## 消息模型（围绕消息的可靠抽象）
 

@@ -55,6 +55,9 @@ class RoomPreset:
     transports: dict[str, dict] = field(default_factory=dict)
     # 角色卡里引擎不认识的键（原样 + *_env 已解析）：agent_options["a1"] = {"bot_token": ...}
     agent_options: dict[str, dict] = field(default_factory=dict)
+    # prompt 覆盖目录（已按预设文件位置解析成绝对路径）：同名 `<段>/<名>.md` 优先于包内 prompts/。
+    # 私有世界改 output_contract / usher 例子 / 叙事口吻不必碰包，散文跟着预设走。
+    prompts_dir: Path | None = None
 
 
 def resolve_env_keys(raw: dict) -> dict:
@@ -91,7 +94,11 @@ def _load_player(pl: dict) -> PresetPlayer:
 
 
 def load_preset(path: str | os.PathLike[str]) -> RoomPreset:
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    path = Path(path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    prompts_dir = data.get("prompts_dir")
+    if prompts_dir:
+        prompts_dir = (path.parent / prompts_dir).resolve()
 
     world = WorldBook(
         bible=data["world"]["bible"],
@@ -136,4 +143,5 @@ def load_preset(path: str | os.PathLike[str]) -> RoomPreset:
         providers=providers,
         transports=transports,
         agent_options=agent_options,
+        prompts_dir=prompts_dir or None,
     )

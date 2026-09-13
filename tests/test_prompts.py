@@ -102,3 +102,18 @@ def test_no_fstring_escaping_leaked_into_assets():
     text = load("role/output_contract")
     assert "{{{{" not in text
     assert '\\"' not in text
+
+
+def test_override_dir_takes_precedence_and_falls_back(tmp_path):
+    # 覆盖目录里同名 .md 优先；没覆盖的仍走包内；清除后恢复
+    from aichatgroup.prompts import set_override_dir
+    (tmp_path / "role").mkdir()
+    (tmp_path / "role" / "output_contract.md").write_text("MY CONTRACT {{SEPARATOR}}", encoding="utf-8")
+    try:
+        set_override_dir(tmp_path)
+        tail = render("role/tail", base_prompt="", name="X", character_card="", knowledge="", memory="", conductor="")
+        assert "MY CONTRACT" in tail and "扮演的角色是「X」" in tail   # include 也走覆盖；tail 本身仍来自包内
+        assert "absorb" in load("usher/system")                       # 未覆盖 → 包内
+    finally:
+        set_override_dir(None)
+    assert "MY CONTRACT" not in load("role/output_contract")

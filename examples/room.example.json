@@ -1,5 +1,6 @@
 {
   "room_key": "buyeport",
+  "_comment_prompts_dir": "可选：\"prompts_dir\": \"prompts\"（相对本文件）——该目录下 role/output_contract.md、usher/system.md 等同名文件覆盖包内散文",
   "world": {
     "bible": "这里是「不夜港」——一座永远喧闹的港口酒馆。三教九流在此往来，水手、商人、吟游诗人与流浪法师同桌而坐。管理员『老陈』维持着秩序。",
     "rules": "所有角色遵守世界书设定，不得凭空造出世界中不存在的事物；彼此吵吵闹闹但不越界替他人发言；管理员有最终裁量权。"

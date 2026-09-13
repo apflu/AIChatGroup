@@ -6,6 +6,7 @@
   uv run scripts/dump_prompt.py --preset preset/room.json --db data.db   # 从库里灌近窗历史
   uv run scripts/dump_prompt.py --preset preset/room.json --hook "有人在门口徘徊"   # 带编导指令
   uv run scripts/dump_prompt.py --cheap                                  # 四个便宜模型的 system 指令
+  uv run scripts/dump_prompt.py --preset preset/room.json --prompts-dir preset/prompts  # 试一份覆盖散文
 
 不发任何模型调用。
 """
@@ -29,7 +30,20 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--history", type=int, default=60, help="--db 时灌入的近窗条数")
     ap.add_argument("--hook", default="", help="模拟 storyteller 的会话意图（进尾部编导指令）")
     ap.add_argument("--cheap", action="store_true", help="改为打印四个便宜模型的 system 指令")
+    ap.add_argument("--prompts-dir", help="prompt 覆盖目录（缺省用预设里的 prompts_dir）")
     args = ap.parse_args(argv)
+
+    preset = None
+    if args.preset:
+        from aichatgroup.presets import load_preset
+
+        preset = load_preset(args.preset)
+    override = args.prompts_dir or (preset.prompts_dir if preset else None)
+    if override:
+        from aichatgroup.prompts import set_override_dir
+
+        set_override_dir(override)
+        print(f"# prompt 覆盖目录：{override}", file=sys.stderr)
 
     if args.cheap:
         for name in _CHEAP:
@@ -38,9 +52,6 @@ def main(argv: list[str] | None = None) -> int:
     if not args.preset:
         ap.error("--preset 必填（或用 --cheap）")
 
-    from aichatgroup.presets import load_preset
-
-    preset = load_preset(args.preset)
     agent = next((a for a in preset.agents if a.id == args.agent), None) if args.agent else preset.agents[0]
     if agent is None:
         print(f"预设里没有 id={args.agent!r} 的角色；可选：{[a.id for a in preset.agents]}", file=sys.stderr)

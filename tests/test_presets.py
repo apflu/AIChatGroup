@@ -87,3 +87,11 @@ def test_transports_block_and_generic_players(tmp_path, monkeypatch):
     assert TelegramConfig.from_preset(preset).agent_tokens == {"a1": "direct-token"}
     assert (preset.players[0].channel, preset.players[0].external_id) == ("foundry", "42")
     assert (preset.players[1].channel, preset.players[1].external_id) == ("telegram", "7")
+
+
+def test_prompts_dir_resolved_relative_to_preset_file(tmp_path):
+    (tmp_path / "my_prompts").mkdir()
+    data = {"world": {"bible": "x"}, "agents": [], "prompts_dir": "my_prompts"}
+    preset = load_preset(_write(tmp_path, data))
+    assert preset.prompts_dir == (tmp_path / "my_prompts").resolve()
+    assert load_preset(_write(tmp_path, {"world": {"bible": "x"}, "agents": []})).prompts_dir is None

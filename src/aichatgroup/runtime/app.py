@@ -16,6 +16,7 @@ from ..message.conductor import ModelConductor
 from ..message.conductor.base import Conductor
 from ..message.usher import Usher
 from ..presets import RoomPreset
+from ..prompts import set_override_dir
 from ..story.storyteller import ModelStoryteller, Storyteller
 from .log_relay import EventLogRelay
 from .orchestrator import Orchestrator
@@ -38,6 +39,8 @@ def build_orchestrator(
 
     缺 provider 抛 RuntimeError。conductor / storyteller 可替换（如试跑时用 RoundRobin）。
     """
+    # 预设自带的 prompt 覆盖目录（无则清除，别沿用上一个预设的）
+    set_override_dir(preset.prompts_dir)
     # 按可用 key + 预设内嵌 provider 装配，按 别名::模型 路由（无可用 provider 会抛 RuntimeError）
     gateway = gateway or build_gateway(settings, extra_providers=preset.providers)
     conductor = conductor or ModelConductor(gateway, settings.conductor_model)
