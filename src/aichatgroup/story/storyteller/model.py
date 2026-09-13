@@ -31,7 +31,7 @@ _KIND_LABEL = "KIND:"
 _HOOK_LABEL = "HOOK:"
 _KNOW_LABEL = "KNOW"     # `KNOW <agent_id>: <只有 ta 知道的事>`（M3 知识不对称，可 0~N 行）
 
-_STORYTELLER_SYSTEM = load_prompt("storyteller.system")
+_STORYTELLER_SYSTEM = load_prompt("storyteller/system")
 
 
 class ModelStoryteller:
@@ -48,30 +48,16 @@ class ModelStoryteller:
         last_end: ConversationEnd | None,
         agents: list[Agent] | None = None,
     ) -> ConversationIntent:
-        recent = "\n".join(
-            m.render() for m in room.visible_history(last=self.recent_window)
-        ) or "（还没有人说话）"
-        # 在场角色名册（name+id）：storyteller 据此按 agent_id 私授知识；不给则无法定向授知。
-        cast = "、".join(f"{a.name}({a.id})" for a in agents) if agents else "（未提供在场角色）"
-        # 局势 = 长期摘要 + 客观关系（首段会话时这是 storyteller 唯一的"依据"，
-        # 房间铺底的种子摘要经此进 storyteller 的决策，否则它只能看空历史瞎猜）
-        situation_parts = []
-        if room.long_term_summary.strip():
-            situation_parts.append(room.long_term_summary.strip())
-        if room.objective_relations.strip():
-            situation_parts.append("关系：" + room.objective_relations.strip())
-        situation = "\n".join(situation_parts) or "（暂无既有局势）"
-        last_reason = last_end.reason if last_end else "（这是第一段会话）"
-        last_summary = (last_end.summary_hook if last_end else "") or "（无）"
-        direction = (last_end.direction if last_end else "") or "（无）"
+        recent = "\n".join(m.render() for m in room.visible_history(last=self.recent_window))
+        # 在场角色名册（name+id）进模板：storyteller 据此按 agent_id 私授知识；不给则无法定向授知。
+        # 局势 = 长期摘要 + 客观关系（首段会话时这是 storyteller 唯一的"依据"）；兜底文案在模板里。
         user = render_prompt(
-            "storyteller.user",
-            situation=situation,
+            "storyteller/user",
+            summary=room.long_term_summary.strip(),
+            relations=room.objective_relations.strip(),
+            agents=agents or [],
             recent=recent,
-            cast=cast,
-            last_reason=last_reason,
-            last_summary=last_summary,
-            direction=direction,
+            last_end=last_end,
         )
         # 网络/模型异常 → 保守回落闲聊（误判只赔平淡）
         resp = ask_or_none(

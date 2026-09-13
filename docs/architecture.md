@@ -44,7 +44,7 @@ aichatgroup/
 │   ├── ordering.py        #   ★TODO 偏序/DAG：BubbleGraph、depends_on、topological_sort
 │   └── beat.py            #   ★TODO BeatPlan / SpeakIntent（编排的数据结构，非逻辑）
 │
-├── prompts/               # 【文本资产】整段 prompt：system+user 模板 + world/tail/persona 片段（*.md）
+├── prompts/               # 【文本资产】jinja2 模板（${slot}）：role/{world,situation,tail,output_contract}.md + usher|conductor|storyteller|compaction/{system,user}.md
 │                          #   运行时数据用 $slot 回填（string.Template，字面 {{marker}}/{json} 免转义）。
 │                          #   loader 无 import 依赖；"数据 → 散文"的渲染函数在 message/prompt/builder（domain 不碰它）。
 │                          #   机器契约（marker 值/DIRECTIONS/none/MockGateway 正则）仍是代码常量，留解析器身边，靠 test 防漂移。

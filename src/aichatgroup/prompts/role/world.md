@@ -1,5 +1,5 @@
 # 世界观圣经
-$bible
+${bible}
 
 # 群聊规则
-$rules
+${rules}

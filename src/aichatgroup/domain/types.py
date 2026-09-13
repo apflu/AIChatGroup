@@ -147,6 +147,8 @@ class RoomState:
     # 第 1 层：长期摘要 + 客观关系图谱（周期性/压缩时重写）
     long_term_summary: str = ""
     objective_relations: str = ""
+    # 第 1 层：在场的人类玩家（世界名 -> 世界内人设，可空串）。来自预设，静态；进共享缓存块。
+    players: dict[str, str] = field(default_factory=dict)
     # 第 2 层：近期共享历史（append-only）
     history: list[Message] = field(default_factory=list)
     # 第 3 层尾部：每 Agent 私有记忆快照（agent_id -> 文本），每轮整块替换

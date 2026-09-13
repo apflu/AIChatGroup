@@ -22,7 +22,7 @@ from ...prompts import render as render_prompt
 
 logger = logging.getLogger(__name__)
 
-_COMPACT_SYSTEM = load_prompt("compaction.system")
+_COMPACT_SYSTEM = load_prompt("compaction/system")
 
 
 @dataclass
@@ -51,9 +51,9 @@ def maybe_compact(
 
     # 转录只含世界可见的行：被清洗的输入不能借摘要回流进长期记忆（M3 §3）
     transcript = "\n".join(m.render() for m in old if not m.redacted)
-    prior = room.long_term_summary.strip() or "(暂无既有摘要)"
     user = render_prompt(
-        "compaction.user", bible=world.bible.strip(), prior=prior, transcript=transcript
+        "compaction/user", bible=world.bible.strip(),
+        prior=room.long_term_summary.strip(), transcript=transcript,
     )
     resp = ask_or_none(
         gateway, model_id, _COMPACT_SYSTEM, user, max_tokens=max_tokens, source="compaction"

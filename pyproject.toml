@@ -9,6 +9,7 @@ description = "多模型 AI 群聊引擎 —— transport-agnostic core engine"
 requires-python = ">=3.10"
 dependencies = [
     "anthropic>=0.40",
+    "jinja2>=3.1.6",
     "loguru>=0.7.3",
 ]
 
@@ -33,8 +34,8 @@ dev = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-# prompts/*.md 是运行时读取的文本资产，打 wheel 必须带上（loader 靠 __file__ 定位）
-aichatgroup = ["prompts/*.md"]
+# prompts/*/*.md 是运行时读取的文本资产，打 wheel 必须带上（loader 靠 __file__ 定位）
+aichatgroup = ["prompts/*/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

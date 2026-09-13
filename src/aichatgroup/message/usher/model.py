@@ -33,7 +33,7 @@ _ABSORB = "absorb"
 # 只有它触发"世界回应后清洗"（M3 桥接）；合法强推（有方向、无 violate）照常 canon 化，不清洗。
 VIOLATE_MARKER = "violate"
 
-_USHER_SYSTEM = load_prompt("usher.system")
+_USHER_SYSTEM = load_prompt("usher/system")
 
 
 @dataclass
@@ -57,10 +57,8 @@ class Usher:
         self.recent_window = recent_window
 
     def classify(self, room: RoomState, text: str, speaker: str = "用户") -> UsherDecision:
-        recent = "\n".join(
-            m.render() for m in room.visible_history(last=self.recent_window)
-        ) or "（还没有人说话）"
-        user = render_prompt("usher.user", recent=recent, speaker=speaker, text=text)
+        recent = "\n".join(m.render() for m in room.visible_history(last=self.recent_window))
+        user = render_prompt("usher/user", recent=recent, speaker=speaker, text=text)
         # 网络/模型异常 → 保守 absorb（误判只赔延迟）
         resp = ask_or_none(
             self.gateway, self.model_id, _USHER_SYSTEM, user,

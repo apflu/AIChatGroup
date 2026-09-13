@@ -19,7 +19,7 @@ from .base import consecutive_count, last_speaker_name
 logger = logging.getLogger(__name__)
 
 # 散文指令在 prompts/conductor.system.md；`none` 是机器契约（下方解析据它判留白），故此处仍显式处理。
-_CONDUCTOR_SYSTEM = load_prompt("conductor.system")
+_CONDUCTOR_SYSTEM = load_prompt("conductor/system")
 
 
 class ModelConductor:
@@ -51,12 +51,9 @@ class ModelConductor:
 
     def next_speaker(self, room: RoomState, agents: list[Agent]) -> str | None:
         eligible = self._eligible(room, agents)
-        roster = "\n".join(f"- {a.id}：{a.name}" for a in eligible)
-        recent = "\n".join(m.render() for m in room.visible_history(last=self.recent_window)) or "(还没有人说话)"
-        options = "、".join(a.id for a in eligible)
-        hint = "，或 none" if self.allow_silence else ""
+        recent = "\n".join(m.render() for m in room.visible_history(last=self.recent_window))
         user = render_prompt(
-            "conductor.user", roster=roster, recent=recent, options=options, hint=hint
+            "conductor/user", agents=eligible, recent=recent, allow_silence=self.allow_silence
         )
         # 模型/网络异常 → 规则兜底（choice 为空 → 走"非法输出"分支选首个候选）
         resp = ask_or_none(

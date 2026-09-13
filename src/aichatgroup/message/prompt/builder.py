@@ -8,7 +8,7 @@
   messages:
     [第2层 共享历史，逐条 user 消息，append-only]
         └─ 最后一条历史消息           ← 滚动 cache breakpoint 3
-    [第3层尾部 该角色人设 + 私有记忆 + conductor 指令（会话意图）+ 输出契约]  ← 不缓存
+    [第3层尾部 该角色人设 + 独知 + 私有记忆 + conductor 指令（会话意图）+ 输出契约]  ← 不缓存
 
 历史全部用 user 角色（带 `[发言者]` 前缀），使得 system+history 前缀对所有 Agent
 逐字节相同 → 共享同一缓存车道；模型据此生成 assistant 回合即当前角色的气泡。
@@ -25,50 +25,31 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from ...domain.types import Agent, RoomState, WorldBook, render_parts
-from ...prompts import load as load_prompt
 from ...prompts import render as render_prompt
 
 # 返回给 Gateway 的结构：system 为 block 列表，messages 为 {role, content} 列表。
 SystemBlock = dict
 Message = dict
 
-# 尾部散文都在 prompts/*.md（tail_header / tail_memory / tail_conductor / output_contract）；
-# marker 字面写在 output_contract.md 里，免去 f-string 的 `{{{{}}}}` 转义。
-# test_prompts 断言 BUBBLE_SEPARATOR / MEMORY_MARKER 的实际值出现在文本里，防与 markers.py 漂移。
-_OUTPUT_CONTRACT = load_prompt("output_contract")
-
-
 def _cache(text: str) -> SystemBlock:
     return {"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}
 
 
-# ---- 各层散文渲染（domain 只存数据；"数据 → 给模型看的文本"在这里）--------------------
+# ---- 各层散文渲染（domain 只存数据；"数据 → 给模型看的文本"在 prompts/role/*.md）-------------
 
 def render_world(world: WorldBook) -> str:
     """第 0 层：世界观圣经 + 群聊规则。"""
-    return render_prompt("world", bible=world.bible.strip(), rules=world.rules.strip())
+    return render_prompt("role/world", bible=world.bible.strip(), rules=world.rules.strip())
 
 
 def render_layer1(room: RoomState) -> str:
-    """第 1 层：长期摘要 + 客观关系图谱；两者皆空时给占位（保证块非空、断点稳定）。"""
-    parts = []
-    if room.long_term_summary.strip():
-        parts.append(render_prompt("layer1_summary", summary=room.long_term_summary.strip()))
-    if room.objective_relations.strip():
-        parts.append(render_prompt("layer1_relations", relations=room.objective_relations.strip()))
-    return "\n\n".join(parts) if parts else "(暂无长期摘要)"
-
-
-def render_persona(agent: Agent) -> str:
-    """RisuAI 式层级：全局 base_prompt → 「扮演的角色是「X」」 → 角色卡。
-    MockGateway 靠 persona.md 里的措辞从尾部认出当前角色（见 io/gateway/mock.py）。"""
-    parts = []
-    if agent.base_prompt.strip():
-        parts.append(agent.base_prompt.strip())
-    parts.append(render_prompt("persona", name=agent.name))
-    if agent.character_card.strip():
-        parts.append(agent.character_card.strip())
-    return "\n\n".join(parts)
+    """第 1 层：前情提要 + 客观关系图谱 + 在场玩家；全空时模板给占位（块非空、断点稳定）。"""
+    return render_prompt(
+        "role/situation",
+        summary=room.long_term_summary.strip(),
+        relations=room.objective_relations.strip(),
+        players={n: p.strip() for n, p in room.players.items()},
+    )
 
 
 def build_tail(
@@ -77,23 +58,24 @@ def build_tail(
     conductor_instruction: str,
     granted_knowledge: str = "",
 ) -> str:
-    """第 3 层尾部：人设 + 角色独知世界秘密 + 私有记忆快照 + conductor 指令 + 输出契约。
+    """第 3 层尾部：人设 + 角色独知世界秘密 + 私有记忆快照 + conductor 指令 + 输出契约（prompts/role/tail.md）。
 
     per-agent 的知识隔离落在这——尾部本就每 agent 不同且不缓存，注入零缓存回归。独知内情两来源：
     `agent.secret_knowledge`（预设静态）+ `granted_knowledge`（storyteller 边界私授、累积），合并渲染。
+    MockGateway 靠 tail.md 里「扮演的角色是「X」」的措辞认出当前角色（见 io/gateway/mock.py）。
     """
-    parts = [load_prompt("tail_header"), render_persona(agent)]
     knowledge = "\n".join(
         k for k in (agent.secret_knowledge.strip(), granted_knowledge.strip()) if k
     )
-    if knowledge:
-        parts.append(render_prompt("tail_knowledge", knowledge=knowledge))
-    if memory_text.strip():
-        parts.append(render_prompt("tail_memory", memory=memory_text.strip()))
-    if conductor_instruction.strip():
-        parts.append(render_prompt("tail_conductor", conductor=conductor_instruction.strip()))
-    parts.append(_OUTPUT_CONTRACT)
-    return "\n\n".join(parts)
+    return render_prompt(
+        "role/tail",
+        base_prompt=agent.base_prompt.strip(),
+        name=agent.name,
+        character_card=agent.character_card.strip(),
+        knowledge=knowledge,
+        memory=memory_text.strip(),
+        conductor=conductor_instruction.strip(),
+    )
 
 
 _QUOTE_LEN = 12  # 被回复消息内联引用的定长截断

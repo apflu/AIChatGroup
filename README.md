@@ -50,11 +50,11 @@ uv run aichatgroup-serve --preset examples/room.example.json
 | 子包 / 模块 | 职责 |
 | --- | --- |
 | `domain/` | 共享内核（纯数据，不 import 任何兄弟包）：`types.py`（`Message`/`ContentPart`/`WorldBook`/`Agent`/`RoomState` ...）、`markers.py`（控制标记词表）、`commands.py`（`/pause` 等控制指令词表，transport 与 runtime 共用）、`conversation.py`、`player.py` |
-| `prompts/` | **整段 prompt 文本资产**（复数）：system + user 模板 + 世界/尾部/人设片段（`*.system.md`/`*.user.md`/`world.md`/`tail_*.md`/`persona.md`…），运行时数据用 `$slot` 回填（`render()`）。散文集中、便于手改、字面 `{{marker}}`/`{json}` 无需转义。机器契约（marker 值/`DIRECTIONS`/`none`/MockGateway 认角色正则）仍是代码常量、留解析器身边 |
+| `prompts/` | **整段 prompt 文本资产**（复数），按「模型看到的一段」分目录：`role/`（`world.md`、`situation.md`、`tail.md`、`output_contract.md`）与 `usher/` `conductor/` `storyteller/` `compaction/`（各 `system.md` + `user.md`）。jinja2 模板，变量写 `${slot}`、块用 `{% if %}`，字面 `{{marker}}`/`{json}` 无需转义；兜底文案写在模板 `{% else %}` 里。机器契约（marker 值/`DIRECTIONS`/`none`/`KIND:`/MockGateway 认角色正则）仍是代码常量。改任何 `.md` 后 `uv run pytest tests/test_prompt_golden.py` 会以 diff 显示模型输入的变化，`uv run scripts/dump_prompt.py --preset …` 打印某角色此刻的完整 prompt |
 | `message/conductor/` | 编导（Conductor）：`rule.py`（RoundRobin，离线）、`model.py`（`ModelConductor`，便宜模型决定谁说话）、`end_detector.py`（M2 会话结束检测 + `TensionReader`） |
 | `message/generator/` | 生成回合（**在线/离线同一份真相**）：`turn.py`（`prepare_turn` → 模型 → `finish_turn` → `GeneratedTurn`；`run_turn` 离线就地应用）、`parsing.py`（多气泡+记忆增量） |
 | `message/delivery/` | 演出：`pacing.py`（气泡节奏）、`queue.py`（单消费者气泡队列 + 抢占，beat 戳）、`perform.py`（逐条投递：举动交旁白、神态隐去、台词走角色出口；回复寻址经 transport 的 `can_reply_natively`）；交错留位 |
-| `message/prompt/` | `builder.py`：分层 Prompt **组装逻辑**（单数）+ 显式 `cache_control` 断点 + 各层散文渲染（`render_world`/`render_layer1`/`render_persona`；散文取自 `prompts/`） |
+| `message/prompt/` | `builder.py`：分层 Prompt **组装逻辑**（单数）+ 显式 `cache_control` 断点 + 各层散文渲染（`render_world`/`render_layer1`/`build_tail`；散文取自 `prompts/role/`）+ `inspect.py`（把组装结果渲成带断点标记的文本，供 dump 脚本与 golden 快照） |
 | `message/usher/` | M2：用户输入台口分流（absorb / `user_forced`），判据"世界要不要回应" |
 | `story/storyteller/` | M2：会话级编导，会话边界播种 `ConversationIntent`；`StubStoryteller`（零模型骨架）/ `ModelStoryteller`（重模型） |
 | `story/memory/` | `compaction.py`：历史压缩（sim 待建） |

@@ -18,7 +18,7 @@ from aichatgroup.message.prompt import build_prompt
 from aichatgroup.message.prompt.inspect import format_prompt
 from aichatgroup.prompts import load as load_prompt
 
-_CHEAP = ("usher.system", "conductor.system", "storyteller.system", "compaction.system")
+_CHEAP = ("usher/system", "conductor/system", "storyteller/system", "compaction/system")
 
 
 def main(argv: list[str] | None = None) -> int:

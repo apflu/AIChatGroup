@@ -55,7 +55,7 @@ def build_orchestrator(
     players = PlayerRegistry(store, room_id, agent_names={a.name for a in preset.agents})
     players.seed((p.channel, p.external_id, p.name, p.persona) for p in preset.players)
 
-    return Orchestrator(
+    orch = Orchestrator(
         world=preset.world,
         agents=preset.agents,
         gateway=gateway,
@@ -73,6 +73,9 @@ def build_orchestrator(
         max_history=settings.max_history,
         keep_last=settings.keep_last,
     )
+    # 预设里的玩家进第 1 层"在场玩家"（让 AI 角色知道这人是谁；静态，缓存安全）
+    orch.room.players = {p.name: p.persona for p in preset.players}
+    return orch
 
 
 async def run_orchestrator(
