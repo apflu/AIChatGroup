@@ -1,4 +1,4 @@
-"""把结构化事件流按级别转发到 Telegram 群 —— 开发期的"把引擎心声播到群里"。
+"""把结构化事件流按级别转发到 transport 的系统出口 —— 开发期的"把引擎心声播到群里"。
 
 一个 loguru sink，只接**带 `event` 的结构化事件**（`observability.log_event` 产出的），
 按级别阈值过滤（默认 DEBUG：能看到 storyteller 播种 / conductor fire / usher 升级，
@@ -18,7 +18,7 @@ from loguru import logger
 from ..io.transport.base import Transport
 
 
-class TelegramLogRelay:
+class EventLogRelay:
     def __init__(self, transport: Transport) -> None:
         self._transport = transport
         self._queue: asyncio.Queue[str] = asyncio.Queue()

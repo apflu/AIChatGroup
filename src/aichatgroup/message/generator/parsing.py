@@ -254,7 +254,7 @@ def parse_turn_output(
     raw_bubbles, hints = _split_bubbles(body)
 
     bubbles: list[ParsedBubble] = []
-    for raw, hint in zip(raw_bubbles, hints):
+    for raw, hint in zip(raw_bubbles, hints, strict=True):
         b = _HANDLE_ECHO_RE.sub("", raw, count=1)      # 剥行首格式回显的 ⟦id⟧（非引用）
         b = _USER_TAG_ANY_RE.sub("", b)                # 全局剥误回显的 <user>
         if speaker:

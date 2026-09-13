@@ -13,9 +13,15 @@
 from __future__ import annotations
 
 import logging
-from typing import Iterable
+from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
-from ..domain.player import Player, sanitize_player_name
+from ..domain.player import STRANGER_NAME, Player, sanitize_player_name
+from ..observability import log_event
+
+if TYPE_CHECKING:
+    from ..io.persistence import Store
+    from ..io.transport.base import InboundMessage
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +29,7 @@ logger = logging.getLogger(__name__)
 class PlayerRegistry:
     def __init__(
         self,
-        store=None,
+        store: Store | None = None,
         room_id: int | None = None,
         agent_names: Iterable[str] = (),
     ) -> None:
@@ -34,8 +40,7 @@ class PlayerRegistry:
         if store is not None and room_id is not None:
             for r in store.list_players(room_id):
                 p = Player(
-                    name=r["name"], persona=r["persona"],
-                    channel=r["channel"], external_id=r["external_id"],
+                    name=r.name, persona=r.persona, channel=r.channel, external_id=r.external_id,
                 )
                 self._by_ext[(p.channel, p.external_id)] = p
 
@@ -78,3 +83,32 @@ class PlayerRegistry:
 
     def names(self) -> set[str]:
         return {p.name for p in self._by_ext.values()}
+
+
+# ---- 摄入侧的身份解析 / 认领（Orchestrator 调用）---------------------------
+
+def resolve_speaker(players: PlayerRegistry | None, msg: InboundMessage) -> str:
+    """把发送者解析成世界内显示名。无注册表→原显示名（旧行为）；有表但未注册→陌生人。"""
+    if players is not None and msg.sender_id:
+        player = players.resolve(msg.channel, msg.sender_id)
+        return player.name if player is not None else STRANGER_NAME
+    return msg.speaker
+
+
+def claim_name(players: PlayerRegistry | None, msg: InboundMessage) -> Player | None:
+    """`/iam <世界名>`：把发送者的稳定 id 绑到一个世界名（含净化/软查重）。失败返回 None（已记 event）。"""
+    if players is None or not msg.sender_id:
+        return None
+    parts = msg.text.split(" ", 1)
+    name = parts[1].strip() if len(parts) > 1 else ""
+    if not name:
+        log_event("player_iam_rejected", channel=msg.channel, reason="空名字")
+        return None
+    try:
+        player = players.register(msg.channel, msg.sender_id, name)
+    except ValueError as exc:
+        log_event("player_iam_rejected", channel=msg.channel, name=name, reason=str(exc))
+        return None
+    logger.info("玩家认领世界名：%s", player.name)
+    log_event("player_register", name=player.name, channel=msg.channel)
+    return player

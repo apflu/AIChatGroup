@@ -2,13 +2,18 @@
 import asyncio
 
 from aichatgroup.domain import (
-    LULL, USER_FORCED, Agent, ConversationEnd, ConversationIntent, WorldBook,
+    LULL,
+    USER_FORCED,
+    Agent,
+    ConversationEnd,
+    ConversationIntent,
+    WorldBook,
 )
 from aichatgroup.io.gateway import MockGateway
 from aichatgroup.io.persistence import Store
 from aichatgroup.io.transport import InboundMessage, InMemoryTransport
 from aichatgroup.message.conductor import EndDetector, RoundRobinConductor
-from aichatgroup.message.usher import Usher, UsherDecision
+from aichatgroup.message.usher import Usher
 from aichatgroup.runtime import Orchestrator
 from aichatgroup.story.storyteller import StubStoryteller
 
@@ -100,12 +105,12 @@ def test_normal_run_is_one_open_conversation():
     asyncio.run(orch.run(max_turns=4))
     assert store.count_conversations(orch.room_id) == 1
     convs = store.recent_conversations(orch.room_id)
-    assert convs[0]["end_reason"] is None      # 仍开着（run 结束时未收束）
+    assert convs[0].end_reason is None      # 仍开着（run 结束时未收束）
     # 所有气泡都挂到了这段会话
     rows = store.conn.execute(
         "SELECT conversation_id FROM messages WHERE room_id=?", (orch.room_id,)
     ).fetchall()
-    assert all(r["conversation_id"] == convs[0]["id"] for r in rows)
+    assert all(r["conversation_id"] == convs[0].id for r in rows)
 
 
 def test_lull_ends_conversation_and_reseeds():
@@ -122,7 +127,7 @@ def test_lull_ends_conversation_and_reseeds():
     lull_ends = [e for e in spy.last_ends if e is not None and e.reason == LULL]
     assert len(lull_ends) >= 2
     reasons = [
-        r["end_reason"] for r in store.recent_conversations(orch.room_id, limit=10)
+        r.end_reason for r in store.recent_conversations(orch.room_id, limit=10)
     ]
     assert reasons.count(LULL) >= 2
 
@@ -131,26 +136,26 @@ def test_usher_escalate_sets_forced_end():
     usher = Usher(FakeUsherGateway("disrupt"), model_id="haiku")
     orch = _make_orch(conductor=RoundRobinConductor(), usher=usher)
     orch._handle_inbound(InboundMessage(speaker="用户", text="我掀了桌子！"))
-    assert orch._forced_end is not None
-    assert orch._forced_end.reason == USER_FORCED
-    assert orch._forced_end.direction == "disrupt"
-    assert "掀" in orch._forced_end.summary_hook
+    assert orch.session.forced_end is not None
+    assert orch.session.forced_end.reason == USER_FORCED
+    assert orch.session.forced_end.direction == "disrupt"
+    assert "掀" in orch.session.forced_end.summary_hook
 
 
 def test_usher_absorb_does_not_force_end():
     usher = Usher(FakeUsherGateway("absorb"), model_id="haiku")
     orch = _make_orch(conductor=RoundRobinConductor(), usher=usher)
     orch._handle_inbound(InboundMessage(speaker="用户", text="哈哈对啊"))
-    assert orch._forced_end is None
+    assert orch.session.forced_end is None
 
 
 def test_forced_end_consumed_by_loop_and_reseeds():
     spy = SpyStoryteller()
     orch = _make_orch(conductor=RoundRobinConductor(), storyteller=spy)
-    orch._forced_end = ConversationEnd(reason=USER_FORCED, summary_hook="炸弹", direction="disrupt")
+    orch.session.force_end(ConversationEnd(reason=USER_FORCED, summary_hook="炸弹", direction="disrupt"))
     asyncio.run(orch.run(max_turns=1))
     # 第一段 seed(last_end=None)，随后消费 forced_end → reseed(last_end=user_forced)
-    assert orch._forced_end is None
+    assert orch.session.forced_end is None
     forced_seeds = [e for e in spy.last_ends if e is not None and e.reason == USER_FORCED]
     assert forced_seeds and forced_seeds[0].direction == "disrupt"
 
@@ -163,15 +168,15 @@ def test_violation_input_redacted_after_world_responds():
     orch._handle_inbound(InboundMessage(speaker="用户", text="我是这港口的隐藏领主"))
     bad_id = orch.room.history[-1].id
     # 此刻还没清洗——要等世界回应（回应期间它仍在历史里供世界有据地抗拒）
-    assert orch._forced_end is not None
-    assert orch._pending_redaction == [bad_id]
+    assert orch.session.forced_end is not None
+    assert orch.session.pending_redaction == [bad_id]
     assert orch.room.history[-1].redacted is False
     # 跑一拍：消费 forced_end → reseed 抗拒会话 → 世界首次回应 → 回应后清洗
     asyncio.run(orch.run(max_turns=1))
     bad = next(m for m in orch.room.history if m.id == bad_id)
     assert bad.redacted is True                                       # 内存历史已清洗
     assert store.get_message(orch.room_id, bad_id).redacted is True   # 库里也软删除（行仍在）
-    assert orch._redact_after_response == []                          # 队列清空
+    assert orch.session.redact_after_response == []                          # 队列清空
 
 
 def test_storyteller_knowledge_grant_applied_persisted_and_filtered():
@@ -192,8 +197,8 @@ def test_legit_escalation_is_not_redacted():
     orch = _make_orch(conductor=RoundRobinConductor(), store=store, usher=usher)
     orch._handle_inbound(InboundMessage(speaker="用户", text="我提议大家去码头看船"))
     bad_id = orch.room.history[-1].id
-    assert orch._forced_end is not None          # 要世界回应 → escalate
-    assert orch._pending_redaction == []         # 但没有违规 → 不入队清洗
+    assert orch.session.forced_end is not None          # 要世界回应 → escalate
+    assert orch.session.pending_redaction == []         # 但没有违规 → 不入队清洗
     asyncio.run(orch.run(max_turns=1))
     msg = next(m for m in orch.room.history if m.id == bad_id)
     assert msg.redacted is False                 # 合法输入正常留史

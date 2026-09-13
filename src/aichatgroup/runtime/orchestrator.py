@@ -1,22 +1,19 @@
-"""Orchestrator —— transport-agnostic 的会话主循环。
+"""Orchestrator —— transport-agnostic 的会话主循环（只接线 + loop，不再是 god-loop）。
 
-把摄入、调度、发言、发送、持久化、开关键、compaction 串成一个异步循环。
-它不认识 Telegram；只依赖 Transport / Conductor / Storyteller / Store 抽象。
+它不认识 Telegram；只依赖 Transport / Conductor / Storyteller / Store 抽象，把各段接起来：
 
-M2：循环从"每拍 conductor 选人"升级为**会话状态机**（三层嵌套时钟，见 docs/milestone/M2.md）：
+    摄入：transport.next_inbound → 指令分派 | 身份解析(players) → repo 入史 → usher 分流 → session
+    发言：session 边界交接 → conductor 选人 → generator（prepare/complete/finish）
+          → delivery.perform（逐条投递、逐条经 repo 入史）→ 记忆合并 → 回应后清洗 → compaction
 
-    storyteller.seed → ConversationIntent ──► 若干 beat（conductor 选人 + EndDetector 观测）
-          ▲                                            │
-          └──── reseed（last_end 带 reason）◄──── conductor 检测到会话收束 ──┘
-
-- **storyteller**（会话级时钟）只在边界工作：seed / reseed。意图的 hook 经 conductor_instruction
-  尾部（不缓存）槽注入 agent，不碰共享历史前缀 → 缓存不变式不破。
-- **conductor**（beat 级时钟）：每拍选人；EndDetector 依 beat 观测判会话该不该结束、报 reason。
-- **usher**：用户输入台口分流。escalate → `user_forced` → 提前收束当前会话，走同一条边界交接路径。
+各段的归属（见 docs/architecture.md）：
+- 会话状态机（seed/end/user_forced/清洗队列）在 `runtime/session.py`；
+- 内存近窗 + 持久层的一致写在 `io/persistence/room_repo.py`；
+- 生成在 `message/generator/turn.py`，演出在 `message/delivery/perform.py`；
+- 平台 reply 限制在各 transport 的 `can_reply_natively`。
 
 并发模型（要点）：
-- 两个协程共享一份 RoomState：`_ingest_loop`（摄入人类/外部消息 + usher 分流）与
-  `_speak_loop`（驱动会话）。二者都只在**事件循环线程**里读写 room。
+- 两个协程共享一份 RoomState：`_ingest_loop` 与 `_speak_loop`。二者都只在**事件循环线程**里读写 room。
 - 唯一下放到线程池（to_thread）的是**发言的网络调用** `gateway.complete`——它不碰 room。
 - conductor / storyteller / usher / compaction 的模型调用为简洁起见同步执行（便宜、低频），
   会短暂占用循环；MVP 可接受。storyteller 只在会话边界跑（事件驱动，非每拍轮询）。
@@ -26,30 +23,29 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
-from ..domain.conversation import USER_FORCED, ConversationEnd, ConversationIntent
-from ..domain.player import STRANGER_NAME
+from ..domain.commands import IAM, PAUSE, RESUME, STATUS, STOP, command_word, is_command
+from ..domain.conversation import USER_FORCED, ConversationEnd
 from ..domain.types import Agent, RoomState, WorldBook
-from .players import PlayerRegistry
 from ..io.gateway import ModelGateway
+from ..io.persistence.room_repo import RoomRepository
 from ..io.persistence.store import Store
 from ..io.transport.base import InboundMessage, Transport
 from ..message.conductor.base import Conductor
 from ..message.conductor.end_detector import EndDetector
-from ..message.delivery.pacing import resolve_pauses
-from ..message.generator.parsing import parse_turn_output
-from ..message.generator.turn import merge_memory
-from ..message.prompt import build_prompt
+from ..message.delivery.perform import perform_turn
+from ..message.generator.parsing import ParsedBubble
+from ..message.generator.turn import finish_turn, merge_memory, prepare_turn
 from ..message.usher import Usher
-from ..observability import log_event, log_model_raw
+from ..observability import log_event
 from ..story.memory.compaction import maybe_compact
-from ..story.storyteller import Storyteller, StubStoryteller, merge_knowledge
+from ..story.storyteller import Storyteller, StubStoryteller
+from .players import PlayerRegistry, claim_name, resolve_speaker
+from .session import ConversationSession
 from .switch import MasterSwitch
 
 logger = logging.getLogger(__name__)
-
-_COMMANDS = {"/pause", "/resume", "/status", "/stop"}
 
 
 class Orchestrator:
@@ -58,10 +54,9 @@ class Orchestrator:
         world: WorldBook,
         agents: list[Agent],
         gateway: ModelGateway,
-        conductor: Conductor | None = None,
-        transport: Transport | None = None,
+        conductor: Conductor,
+        transport: Transport,
         *,
-        director: Conductor | None = None,   # 迁移期别名：等价 conductor
         storyteller: Storyteller | None = None,
         usher: Usher | None = None,
         players: PlayerRegistry | None = None,
@@ -82,15 +77,10 @@ class Orchestrator:
         self.agents = agents
         self._agent_by_id = {a.id: a for a in agents}
         self.gateway = gateway
-        self.conductor = conductor if conductor is not None else director
-        if self.conductor is None:
-            raise TypeError("Orchestrator 需要 conductor（或迁移期别名 director）")
+        self.conductor = conductor
         self.transport = transport
-        self.storyteller: Storyteller = storyteller or StubStoryteller()
         self.usher = usher
         self.players = players
-        self.detector = end_detector or EndDetector()
-        self.store = store
         self.switch = switch or MasterSwitch()
         self.max_tokens = max_tokens
         self.turn_interval_s = turn_interval_s
@@ -100,45 +90,33 @@ class Orchestrator:
         self.keep_last = keep_last
         self._sleep = sleep
 
-        self.room_id: int | None = None
         if store is not None:
-            self.room_id = store.ensure_room(room_key)
-            # 只把**近窗**灌进 room.history，别全量加载。持久 sqlite 跨运行累积全部消息，
-            # 全量会让模型看到上次运行的旧 ⟦id⟧ 并回复它们——那些 telegram message_id 早已失效，
-            # reply 必然 "Message to be replied not found"。近窗内的 external_id 才是本次运行仍有效的。
-            self.room = room or store.load_room_state(self.room_id, history_limit=max_history)
+            self.repo = RoomRepository.open(store, room_key, history_limit=max_history, room=room)
         else:
-            self.room = room or RoomState()
-
-        # 本进程期间实际收发过的消息内部 id（其 external_id 是当前 telegram 会话里新鲜有效的）。
-        # telegram reply 只挂在这些上——启动从 store 加载的历史即便落在近窗，其 message_id 可能属于
-        # 上次运行/已被删，reply 会 "Message to be replied not found"。那些历史一律走 builder 内联引用。
-        self._live_external_ids: set[int] = set()
-
-        # 会话状态机的当前状态
-        self._intent: ConversationIntent | None = None
-        self._conv_id: int | None = None          # 当前会话 DB 行；惰性建（首个气泡时）
-        self._forced_end: ConversationEnd | None = None   # usher escalate 置位，循环消费
-        # usher 判违规（canon 破坏）的输入 id：先在摄入处入队，forced_end 消费时转入
-        # _redact_after_response，等世界抗拒会话**首次成功回应之后**再清洗——回应期间它仍在
-        # 历史里供世界有据地抗拒，回应后消失，斩断后续 beat 的放大链（M3 桥接）。
-        self._pending_redaction: list[int] = []
-        self._redact_after_response: list[int] = []
+            self.repo = RoomRepository.in_memory(room)
+        self.session = ConversationSession(
+            storyteller or StubStoryteller(), end_detector or EndDetector(), self.repo, agents
+        )
 
         self._running = False
         self._stop_event = asyncio.Event()
 
-    # ---- director 别名（读旧属性名的外部代码兼容）----------------------
+    # 便利属性（脚本/测试读）
     @property
-    def director(self) -> Conductor:
-        return self.conductor
+    def room(self) -> RoomState:
+        return self.repo.room
+
+    @property
+    def store(self) -> Store | None:
+        return self.repo.store
+
+    @property
+    def room_id(self) -> int | None:
+        return self.repo.room_id
 
     # ---- 生命周期 ------------------------------------------------------
     async def run(self, max_turns: int | None = None) -> int:
-        """启动主循环。max_turns 非空时跑满该发言回合数后自动停（测试/演示用）。
-
-        返回实际完成的发言回合数。
-        """
+        """启动主循环。max_turns 非空时跑满该发言回合数后自动停（测试/演示用）。返回实际完成的发言回合数。"""
         await self.transport.start()
         self._running = True
         self._stop_event.clear()
@@ -157,60 +135,6 @@ class Orchestrator:
         self._running = False
         self._stop_event.set()
 
-    # ---- 会话状态机 ----------------------------------------------------
-    def _begin_conversation(self, last_end: ConversationEnd | None = None) -> None:
-        """seed / reseed：storyteller 为下一段会话播种意图，重置结束检测器。"""
-        self._intent = self.storyteller.seed(self.room, last_end, self.agents)
-        self._apply_knowledge_grants(self._intent)
-        self._conv_id = None                       # 惰性建表：首个气泡时才落库
-        self.detector.begin(self._intent)
-        log_event(
-            "conversation_seed",
-            intent_kind=self._intent.kind,
-            hook=self._intent.hook,
-            last_reason=(last_end.reason if last_end else None),
-        )
-
-    def _apply_knowledge_grants(self, intent: ConversationIntent) -> None:
-        """把 storyteller 私授的知识累积进 room.knowledge[agent_id] + 持久化（M3 知识不对称）。
-
-        只认名册里的 agent_id（模型瞎报的 id 丢弃）；累积去重（merge_knowledge）；进不缓存尾部，
-        缓存安全。多数会话 intent.knowledge 为空 → 无操作。
-        """
-        for agent_id, grant in intent.knowledge.items():
-            if agent_id not in self._agent_by_id or not grant.strip():
-                continue
-            merged = merge_knowledge(self.room.knowledge.get(agent_id, ""), grant)
-            self.room.knowledge[agent_id] = merged
-            if self.store is not None and self.room_id is not None:
-                self.store.save_knowledge(self.room_id, agent_id, merged)
-            log_event("knowledge_grant", agent=agent_id)
-
-    def _ensure_conversation_row(self) -> int | None:
-        """首个气泡时才把会话落库——空会话（冷场即散）不留垃圾行。"""
-        if (
-            self._conv_id is None
-            and self.store is not None
-            and self.room_id is not None
-            and self._intent is not None
-        ):
-            self._conv_id = self.store.start_conversation(
-                self.room_id, kind=self._intent.kind, hook=self._intent.hook
-            )
-        return self._conv_id
-
-    def _end_conversation(self, end: ConversationEnd) -> None:
-        if self._conv_id is not None and self.store is not None:
-            self.store.end_conversation(
-                self._conv_id,
-                reason=end.reason,
-                tension=end.tension,
-                summary=end.summary_hook,
-            )
-        log_event(
-            "conversation_end", reason=end.reason, tension=end.tension, conv_id=self._conv_id
-        )
-
     # ---- 摄入 ----------------------------------------------------------
     async def _ingest_loop(self) -> None:
         while self._running:
@@ -218,65 +142,41 @@ class Orchestrator:
             self._handle_inbound(msg)
 
     def _handle_inbound(self, msg: InboundMessage) -> None:
-        text = msg.text.strip()
-        first = text.split(" ", 1)[0].lower()
-        if first == "/iam":
-            self._handle_iam(msg)              # 认领世界名，需 sender_id，故走这条特殊路
+        if msg.is_command or is_command(msg.text):
+            self._handle_command(msg)
             return
-        if msg.is_command or first in _COMMANDS:
-            self._handle_command(text)
-            return
-        # 解析世界身份：稳定 sender_id → Player 世界名（未注册=陌生人；无注册表=原显示名）
-        speaker = self._resolve_speaker(msg)
-        # 若这条是回复某条消息，把被回复的 external_id 解析成内部 id
-        reply_to = self._internal_id_for_external(msg.reply_to_external_id)
-        # 去重 + 追加共享历史（store id 为权威 handle）
-        mid = None
-        if self.store is not None and self.room_id is not None:
-            mid = self.store.append_message(
-                self.room_id, speaker, msg.text,
-                external_id=msg.external_id, reply_to_id=reply_to,
-                conversation_id=self._conv_id,
-            )
-            if mid is None:
-                logger.debug("摄入去重：external_id=%s 已存在，跳过", msg.external_id)
-                return
-        meta = {"external_id": msg.external_id} if msg.external_id else None
-        appended = self.room.append(
-            speaker, msg.text, id=mid, author_kind="human",
-            reply_to=reply_to, meta=meta,
+        speaker = resolve_speaker(self.players, msg)
+        reply_to = self.repo.id_for_external(msg.reply_to_external_id)
+        appended = self.repo.append_human(
+            speaker, msg.text,
+            external_id=msg.external_id, reply_to=reply_to,
+            conversation_id=self.session.conv_id,
         )
+        if appended is None:
+            logger.debug("摄入去重：external_id=%s 已存在，跳过", msg.external_id)
+            return
         logger.info("摄入 [%s] %s", speaker, msg.text)
         log_event("ingest", speaker=speaker, msg_id=appended.id, reply_to=reply_to)
         self._triage_user_input(msg, speaker, appended.id)
 
-    def _resolve_speaker(self, msg: InboundMessage) -> str:
-        """把发送者解析成世界内显示名。无注册表→原显示名（旧行为）；有表但未注册→陌生人。"""
-        if self.players is not None and msg.sender_id:
-            player = self.players.resolve(msg.channel or "telegram", msg.sender_id)
-            return player.name if player is not None else STRANGER_NAME
-        return msg.speaker
-
-    def _handle_iam(self, msg: InboundMessage) -> None:
-        """`/iam <世界名>`：把发送者的稳定 id 绑到一个世界名（含净化/软查重）。"""
-        if self.players is None or not msg.sender_id:
-            return
-        parts = msg.text.split(" ", 1)
-        name = parts[1].strip() if len(parts) > 1 else ""
-        channel = msg.channel or "telegram"
-        if not name:
-            log_event("player_iam_rejected", channel=channel, reason="空名字")
-            return
-        try:
-            player = self.players.register(channel, msg.sender_id, name)
-        except ValueError as exc:
-            log_event("player_iam_rejected", channel=channel, name=name, reason=str(exc))
-            return
-        logger.info("玩家认领世界名：%s", player.name)
-        log_event("player_register", name=player.name, channel=channel)
+    def _handle_command(self, msg: InboundMessage) -> None:
+        cmd = command_word(msg.text)
+        if cmd == IAM:
+            claim_name(self.players, msg)          # 认领世界名，需 sender_id
+        elif cmd == PAUSE:
+            self.switch.pause()
+            logger.info("开关：已暂停自动 chatter")
+        elif cmd == RESUME:
+            self.switch.resume()
+            logger.info("开关：已恢复自动 chatter")
+        elif cmd == STATUS:
+            logger.info("开关状态：%s", "暂停" if self.switch.paused else "运行")
+        elif cmd == STOP:
+            logger.info("收到 /stop，准备停机")
+            self.request_stop()
 
     def _triage_user_input(self, msg: InboundMessage, speaker: str, msg_id: int) -> None:
-        """usher 台口分流：escalate → 置 user_forced，让 speak 循环提前收束当前会话。
+        """usher 台口分流：escalate → user_forced，让 speak 循环提前收束当前会话。
 
         误判只赔延迟不赔丢失——absorb 的输入已进历史，下个边界 storyteller 一定看到。
         speaker 是解析后的世界名（usher 也据世界身份判断，而非原始显示名）。
@@ -287,11 +187,10 @@ class Orchestrator:
             return
         decision = self.usher.classify(self.room, msg.text, speaker=speaker)
         if decision.escalate:
-            self._forced_end = ConversationEnd(
-                reason=USER_FORCED, summary_hook=msg.text, direction=decision.direction
+            self.session.force_end(
+                ConversationEnd(reason=USER_FORCED, summary_hook=msg.text, direction=decision.direction),
+                redact_id=msg_id if decision.violation else None,
             )
-            if decision.violation:
-                self._pending_redaction.append(msg_id)
             log_event(
                 "usher_escalate", speaker=speaker,
                 direction=decision.direction, violation=decision.violation,
@@ -299,71 +198,10 @@ class Orchestrator:
         else:
             log_event("usher_absorb", speaker=speaker)
 
-    def _do_redact(self, msg_id: int) -> None:
-        """世界回应违规输入之后，把它软删除：从此对所有 agent 的模型上下文不可见。
-
-        仅上下文——DB 行保留（审计），Telegram 消息不动。内存 room.history 必须同步置位
-        （speak 循环直接读 room.history 组装 prompt，只改库本次运行仍看得见）。
-        """
-        if self.store is not None and self.room_id is not None:
-            self.store.redact_message(self.room_id, msg_id)
-        for m in self.room.history:
-            if m.id == msg_id:
-                m.redacted = True
-                break
-        logger.info("清洗违规输入 ⟦%s⟧", msg_id)
-        log_event("usher_cleanse", msg_id=msg_id)
-
-    # ---- 回复寻址辅助 --------------------------------------------------
-    def _internal_id_for_external(self, external_id: str | None) -> int | None:
-        if external_id is None:
-            return None
-        if self.store is not None and self.room_id is not None:
-            return self.store.id_for_external(self.room_id, external_id)
-        for m in reversed(self.room.history):        # 离线：扫近窗
-            if m.meta.get("external_id") == external_id:
-                return m.id
-        return None
-
-    def _external_for_internal_id(self, mid: int | None) -> str | None:
-        """给 telegram reply 找被回复消息的 external_id——**只在近窗内找**。
-        超窗（已滑出 room.history）刻意返回 None：那些 telegram message_id 多已失效
-        （尤其跨运行的），硬 reply 会 "Message to be replied not found"；而被回复的内容
-        已由 builder 的超窗内联重注入承载（见 test_cross_window_reply_reinjects_from_store），
-        无需再挂 telegram 的 reply 引用。近窗/超窗二分即 plan 定的边界。"""
-        if mid is None:
-            return None
-        for m in reversed(self.room.history):
-            if m.id == mid:
-                return m.meta.get("external_id")
-        return None
-
-    def _resolve_message(self, mid: int):
-        if self.store is not None and self.room_id is not None:
-            return self.store.get_message(self.room_id, mid)
-        for m in self.room.history:
-            if m.id == mid:
-                return m
-        return None
-
-    def _handle_command(self, text: str) -> None:
-        cmd = text.split(" ", 1)[0].lower()
-        if cmd == "/pause":
-            self.switch.pause()
-            logger.info("开关：已暂停自动 chatter")
-        elif cmd == "/resume":
-            self.switch.resume()
-            logger.info("开关：已恢复自动 chatter")
-        elif cmd == "/status":
-            logger.info("开关状态：%s", "暂停" if self.switch.paused else "运行")
-        elif cmd == "/stop":
-            logger.info("收到 /stop，准备停机")
-            self.request_stop()
-
     # ---- 发言（会话循环）----------------------------------------------
     async def _speak_loop(self, max_turns: int | None) -> int:
         turns = 0
-        self._begin_conversation()                   # 播种第一段会话
+        self.session.begin()                         # 播种第一段会话
         while self._running:
             if max_turns is not None and turns >= max_turns:
                 break
@@ -372,16 +210,7 @@ class Orchestrator:
                 continue
 
             # 用户强制收束优先：提前触发一次正常的边界交接（机制与自然结束统一）
-            forced = self._forced_end
-            if forced is not None:
-                self._forced_end = None
-                self._end_conversation(forced)
-                self._begin_conversation(last_end=forced)
-                # 违规输入随抗拒会话开场进入"待回应后清洗"队列：此刻还不动它，
-                # 让接下来的世界抗拒回应能读到它、有据地抵抗；回应成功后再清洗。
-                if self._pending_redaction:
-                    self._redact_after_response.extend(self._pending_redaction)
-                    self._pending_redaction = []
+            if self.session.consume_forced_end() is not None:
                 continue
 
             speaker_id = self.conductor.next_speaker(self.room, self.agents)
@@ -389,30 +218,20 @@ class Orchestrator:
             if spoke:
                 agent = self._agent_by_id[speaker_id]
                 log_event("schedule", agent=agent.name, model=agent.model_id)
-                hook = self._intent.hook if self._intent else ""
                 try:
-                    await self._speak(agent, hook)
+                    await self._speak(agent, self.session.hook)
                 except Exception as exc:
                     # 单个 provider 抽风（鉴权失败/超时/限流）不应拖垮整屋子。
                     logger.exception("角色 %s 发言失败，跳过本回合", agent.name)
                     log_event("error", agent=agent.name, error=str(exc))
                 else:
-                    # 世界成功回应 → 若有待清洗的违规输入，现在抹去它（回应之后），斩断放大链。
-                    if self._redact_after_response:
-                        for mid in self._redact_after_response:
-                            self._do_redact(mid)
-                        self._redact_after_response = []
+                    self.session.after_world_responded()
                 turns += 1
 
-            # beat 观测 → 会话是否收束（带 reason）
-            self.detector.observe(self.room, spoke)
-            end = self.detector.check(self.room)
-            if end is not None:
-                self._end_conversation(end)
-                self._begin_conversation(last_end=end)
+            end = self.session.observe_beat(spoke)
 
             if spoke:
-                await self._maybe_compact()
+                self._maybe_compact()
                 await self._sleep(self.turn_interval_s)
             elif end is None:
                 # 这一拍留白且未到 lull：等人插话，别空转
@@ -420,94 +239,33 @@ class Orchestrator:
         return turns
 
     async def _speak(self, agent: Agent, conductor_instruction: str = "") -> None:
-        conv_id = self._ensure_conversation_row()
-        # 1) 组装 prompt（循环线程内，只读 room）；resolve 供超窗回复内联重注入
-        system, messages = build_prompt(
-            self.world, self.room, agent, conductor_instruction,
-            resolve=self._resolve_message,
+        conv_id = self.session.ensure_row()
+        # 1) 组装（循环线程内，只读 room；resolve 供超窗回复内联重注入）
+        system, messages = prepare_turn(
+            self.world, self.room, agent, conductor_instruction, resolve=self.repo.find
         )
         # 2) 网络调用下放线程池（不碰 room，无竞争）
         resp = await asyncio.to_thread(
             self.gateway.complete, system, messages, agent.model_id, self.max_tokens
         )
         # 3) 解析 + 节奏（循环线程内）
-        # 原始模型输出先落 FIREHOSE（解析前），便于诊断"回复未命中 filter"/prompt 效果
-        log_model_raw("generator", resp.text, agent=agent.name)
-        parsed, memory_delta = parse_turn_output(resp.text, speaker=agent.name)
-        # 停顿按**台词**长度算（动作已剥离、不由角色 bot 打字）；纯举动气泡台词为空、停顿退到基础值
-        pauses = resolve_pauses(
-            [pb.text for pb in parsed], [pb.pause_hint for pb in parsed], agent.pacing
-        )
-        logger.info(
-            "回合 %s bubbles=%d cache_read=%d cache_creation=%d",
-            agent.name, len(parsed),
-            resp.usage.cache_read_input_tokens, resp.usage.cache_creation_input_tokens,
-        )
-        # model_call 只留 output + cache 计数（不记 input tokens），TRACE 级保持可读、够诊断 cache
-        log_event(
-            "model_call", agent=agent.name, model=agent.model_id, bubbles=len(parsed),
-            output_tokens=resp.usage.output_tokens,
-            cache_read=resp.usage.cache_read_input_tokens,
-            cache_creation=resp.usage.cache_creation_input_tokens,
-        )
-        # 4) 逐条发送，按 kind 分流投递（两平面：舞台层不由角色第一人称括号发）：
-        #    举动(beat) → 旁白 bot 0 第三人称播报；神态(gesture) → 隐去；台词(speech) → 角色 bot。
-        #    历史/持久化仍存完整 display（含动作括号）→ 模型上下文与共享缓存前缀不变。
-        for pb, pause in zip(parsed, pauses):
-            # 举动先由旁白公之于众（多数是「先动手、再开口」）
-            for beat in pb.beats:
-                await self.transport.send_system(f"{agent.name}{beat}")
-            # 台词 → 角色 bot（纯举动气泡台词为空则不发，但仍入历史保留动作）
-            speech = pb.text
-            ext = None
-            if speech.strip():
-                await self.transport.send_typing(agent)
-                if pause > 0:
-                    await self._sleep(pause)
-                # 若这条回复了历史某条，解析出被回复消息的 external_id 一起发给 transport。
-                # telegram 可见性限制：角色 bot 只能原生 reply **人类消息**（需该 bot 已关 privacy mode，
-                # 否则对群里非自己发的消息不可见 → "message to be replied not found"）或**自己发的**消息；
-                # reply 另一个角色 bot 的消息是硬限制、关 privacy 也不行。不能原生 reply 的目标就不挂
-                # telegram reply——回复关系仍由 builder 内联引用 + reply_to_id 承载。降级重发是最后兜底。
-                target_ext = self._external_for_internal_id(pb.reply_to)
-                if pb.reply_to is not None:
-                    tgt = next(
-                        (m for m in reversed(self.room.history) if m.id == pb.reply_to), None
-                    )
-                    native_ok = tgt is not None and (
-                        tgt.author_kind == "human" or tgt.speaker == agent.name
-                    )
-                    if not native_ok:
-                        target_ext = None
-                    log_event(
-                        "reply_resolve", agent=agent.name, reply_to=pb.reply_to,
-                        external_id=target_ext, native_reply=native_ok,
-                        target=(f"{tgt.speaker}({tgt.author_kind}): {tgt.text[:24]}"
-                                if tgt is not None else "(不在近窗)"),
-                    )
-                ext = await self.transport.send_text(
-                    agent, speech, reply_to_external_id=target_ext
-                )
-            # store id 为权威 handle；回填 external_id（供后续消息回复本条）+ reply_to_id
-            mid = None
-            if self.store is not None and self.room_id is not None:
-                mid = self.store.append_message(
-                    self.room_id, agent.name, pb.display,
-                    external_id=ext, reply_to_id=pb.reply_to,
-                    conversation_id=conv_id,
-                )
-            meta = {"external_id": ext} if ext else None
-            self.room.append(
-                agent.name, id=mid, parts=pb.parts, reply_to=pb.reply_to, meta=meta,
-            )
-        # 5) 合并记忆增量（尾部私有快照，不缓存）
-        if memory_delta:
-            merged = merge_memory(self.room.memory.get(agent.id, ""), memory_delta)
-            self.room.memory[agent.id] = merged
-            if self.store is not None and self.room_id is not None:
-                self.store.save_memory(self.room_id, agent.id, merged)
+        turn = finish_turn(agent, resp)
 
-    async def _maybe_compact(self) -> None:
+        # 4) 逐条演出；每条发出后立即入史（历史/持久化存完整 display，含动作括号）
+        def _on_sent(pb: ParsedBubble, ext: str | None) -> None:
+            self.repo.append_bubble(
+                agent.name, pb.parts, pb.display,
+                external_id=ext, reply_to=pb.reply_to, conversation_id=conv_id,
+            )
+
+        await perform_turn(self.transport, turn, self.room, sleep=self._sleep, on_sent=_on_sent)
+
+        # 5) 合并记忆增量（尾部私有快照，不缓存）
+        if turn.memory_delta:
+            merged = merge_memory(self.room.memory.get(agent.id, ""), turn.memory_delta)
+            self.repo.save_memory(agent.id, merged)
+
+    def _maybe_compact(self) -> None:
         if self.compaction_model_id is None:
             return
         result = maybe_compact(
@@ -516,8 +274,4 @@ class Orchestrator:
         )
         if result.compacted:
             log_event("compaction", dropped=result.dropped)
-            if self.store is not None and self.room_id is not None:
-                self.store.save_summary(
-                    self.room_id, self.room.long_term_summary, self.room.objective_relations
-                )
-                self.store.trim_history(self.room_id, self.keep_last)
+            self.repo.persist_compaction(self.keep_last)

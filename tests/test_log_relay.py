@@ -1,11 +1,11 @@
-"""TelegramLogRelay：按级别 + event 过滤，把事件流转发到 transport.send_system。"""
+"""EventLogRelay：按级别 + event 过滤，把事件流转发到 transport.send_system。"""
 import asyncio
 
 from loguru import logger
 
 from aichatgroup.io.transport import InMemoryTransport
 from aichatgroup.observability import log_event
-from aichatgroup.runtime.log_relay import TelegramLogRelay
+from aichatgroup.runtime.log_relay import EventLogRelay
 
 
 async def _wait_for(cond, tries=50):
@@ -24,7 +24,7 @@ def test_send_system_records_on_memory_transport():
 def test_relay_forwards_debug_events_not_trace_not_plain_logs():
     async def _run():
         t = InMemoryTransport()
-        relay = TelegramLogRelay(t)
+        relay = EventLogRelay(t)
         await relay.attach(level="DEBUG")
         try:
             log_event("usher_escalate", speaker="用户", direction="disrupt")  # DEBUG → 转发
@@ -46,7 +46,7 @@ def test_relay_forwards_debug_events_not_trace_not_plain_logs():
 def test_relay_detach_removes_sink():
     async def _run():
         t = InMemoryTransport()
-        relay = TelegramLogRelay(t)
+        relay = EventLogRelay(t)
         await relay.attach(level="DEBUG")
         await relay.detach()
         # detach 后再发事件，不应再入队/转发

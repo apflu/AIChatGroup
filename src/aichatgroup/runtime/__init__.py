@@ -1,7 +1,11 @@
-"""运行时编排层：主循环 + 开关键 + 玩家身份注册表 + Telegram 装配入口。"""
+"""运行时编排层：主循环 + 会话状态机 + 开关键 + 玩家身份 + 装配入口。"""
+from .app import build_orchestrator, run_orchestrator
 from .orchestrator import Orchestrator
 from .players import PlayerRegistry
+from .session import ConversationSession
 from .switch import MasterSwitch
-from .telegram_app import build_orchestrator, serve
 
-__all__ = ["Orchestrator", "MasterSwitch", "PlayerRegistry", "build_orchestrator", "serve"]
+__all__ = [
+    "Orchestrator", "ConversationSession", "MasterSwitch", "PlayerRegistry",
+    "build_orchestrator", "run_orchestrator",
+]

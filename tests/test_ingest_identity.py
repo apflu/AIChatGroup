@@ -1,5 +1,4 @@
 """摄入身份解析：sender_id→世界名、陌生人兜底、/iam 认领；usher 用世界名。"""
-import asyncio
 
 from aichatgroup.domain import Agent, WorldBook
 from aichatgroup.domain.player import STRANGER_NAME
@@ -79,4 +78,4 @@ def test_iam_persists_to_store():
     orch = _orch(players=reg, store=store)
     orch._handle_inbound(InboundMessage(
         text="/iam 银发旅人", sender_id="555", channel="telegram", speaker="apflu"))
-    assert any(p["name"] == "银发旅人" for p in store.list_players(orch.room_id))
+    assert any(p.name == "银发旅人" for p in store.list_players(orch.room_id))
