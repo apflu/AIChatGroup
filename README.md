@@ -1,26 +1,27 @@
 # 多模型 AI 群聊引擎
 
 多个 Agent 用不同模型（Opus / Sonnet / Haiku 等）在同一个群里吵吵闹闹，遵守世界书、
-有导演调度、有开关键。核心引擎 **transport-agnostic**，首个落地面是多个 Telegram bot，
-后续支持 FoundryVTT。设计论证见 [spec_claude_20260707.md](spec_claude_20260707.md)，
-落地计划见 `~/.claude/plans/transient-discovering-wilkinson.md`。
+有编导调度、有开关键。核心引擎 **transport-agnostic**，首个落地面是多个 Telegram bot，
+后续支持 FoundryVTT。架构与分层见 [docs/architecture.md](docs/architecture.md)，
+里程碑见 [docs/milestone/](docs/milestone/)。
 
-当前进度：**M1 —— Telegram 多 bot 热闹群聊**（在 M0 引擎骨架上加：Transport 抽象、
-异步 Orchestrator 主循环、Director 调度、开关键、SQLite 持久化、基础 compaction、
-Telegram 落地面）。M0 骨架（Model Gateway / 分层 Prompt Builder / 单角色单调用多气泡 +
-记忆增量）继续沿用。
+当前进度：M3 知识隔离（进行中，见路线图）。M1 的 Telegram 多 bot 群聊已实机验证；M2 的
+storyteller / usher / 会话状态机已落地。M0 骨架（Model Gateway / 分层 Prompt Builder /
+单角色单调用多气泡 + 记忆增量）继续沿用。
 
 ## 快速开始
 
 ```bash
-# 跑测试（uv 临时装 pytest + anthropic）
-uv run --with pytest --with anthropic python -m pytest -q
+uv sync --group dev            # 装本包 + pytest / ruff / import-linter（一次）
+uv run pytest -q               # 跑测试
+uv run lint-imports            # 校验分层依赖契约（docs/architecture.md §4）
+uv run ruff check src tests scripts
 
 # 离线回放演示（MockGateway，无需 API key，可复现）
-uv run --with anthropic python scripts/replay_demo.py --turns 6
+uv run python scripts/replay_demo.py --turns 6
 
 # 真实调用（需 ANTHROPIC_API_KEY，见 .env.example）
-uv run --with anthropic python scripts/replay_demo.py --live --turns 6
+uv run python scripts/replay_demo.py --live --turns 6
 ```
 
 离线回放的日志会打印每回合的 `cache_read` / `cache_creation`：首回合冷启动写缓存，
@@ -31,9 +32,10 @@ uv run --with anthropic python scripts/replay_demo.py --live --turns 6
 ```bash
 # 1) BotFather 建 1 个观察者 bot + 每个角色各 1 个 bot；观察者务必 /setprivacy → Disable
 # 2) 把所有 bot 拉进同一个群，拿到 chat_id；填好 .env（见 .env.example）与预设 JSON
-# 3) 运行（懒加载 python-telegram-bot）
-uv run --with anthropic --with python-telegram-bot \
-  python scripts/run_telegram.py --preset examples/room.example.json
+# 3) 运行（python-telegram-bot 是 telegram extra，懒加载）
+uv sync --group dev --extra telegram          # 一次
+uv run aichatgroup-serve --preset examples/room.example.json
+# 或免装、依赖内联（PEP 723）：uv run scripts/serve.py --preset examples/room.example.json
 ```
 
 群里 `/pause` 暂停自动 chatter、`/resume` 恢复、`/stop` 停机；人类照常插话即被摄入调度。
@@ -47,33 +49,37 @@ uv run --with anthropic --with python-telegram-bot \
 
 | 子包 / 模块 | 职责 |
 | --- | --- |
-| `domain/` | 共享内核：`types.py`（`Message`/`ContentPart`/`WorldBook`/`Agent`/`RoomState` ...）+ `markers.py`（控制标记词表） |
+| `domain/` | 共享内核（纯数据，不 import 任何兄弟包）：`types.py`（`Message`/`ContentPart`/`WorldBook`/`Agent`/`RoomState` ...）、`markers.py`（控制标记词表）、`commands.py`（`/pause` 等控制指令词表，transport 与 runtime 共用）、`conversation.py`、`player.py` |
 | `prompts/` | **整段 prompt 文本资产**（复数）：system + user 模板 + 世界/尾部/人设片段（`*.system.md`/`*.user.md`/`world.md`/`tail_*.md`/`persona.md`…），运行时数据用 `$slot` 回填（`render()`）。散文集中、便于手改、字面 `{{marker}}`/`{json}` 无需转义。机器契约（marker 值/`DIRECTIONS`/`none`/MockGateway 认角色正则）仍是代码常量、留解析器身边 |
-| `message/conductor/` | 编导（Conductor，原 Director）：`rule.py`（RoundRobin，离线）、`model.py`（`ModelConductor`，Haiku 决定谁说话）、`end_detector.py`（M2 会话结束检测 + `TensionReader`） |
-| `message/generator/` | 生成回合：`turn.py`（发言回合）、`parsing.py`（多气泡+记忆增量） |
-| `message/delivery/` | 演出：`pacing.py`（气泡节奏）；后续加交错队列 + 抢占 |
-| `message/prompt/` | `builder.py`：分层 Prompt **组装逻辑**（单数）+ 显式 `cache_control` 断点（散文取自 `prompts/`） |
-| `message/usher.py` | M2：用户输入台口分流（absorb / `user_forced`），判据"世界要不要回应" |
+| `message/conductor/` | 编导（Conductor）：`rule.py`（RoundRobin，离线）、`model.py`（`ModelConductor`，便宜模型决定谁说话）、`end_detector.py`（M2 会话结束检测 + `TensionReader`） |
+| `message/generator/` | 生成回合（**在线/离线同一份真相**）：`turn.py`（`prepare_turn` → 模型 → `finish_turn` → `GeneratedTurn`；`run_turn` 离线就地应用）、`parsing.py`（多气泡+记忆增量） |
+| `message/delivery/` | 演出：`pacing.py`（气泡节奏）、`perform.py`（逐条投递：举动交旁白、神态隐去、台词走角色出口；回复寻址经 transport 的 `can_reply_natively`）；后续加交错队列 + 抢占 |
+| `message/prompt/` | `builder.py`：分层 Prompt **组装逻辑**（单数）+ 显式 `cache_control` 断点 + 各层散文渲染（`render_world`/`render_layer1`/`render_persona`；散文取自 `prompts/`） |
+| `message/usher/` | M2：用户输入台口分流（absorb / `user_forced`），判据"世界要不要回应" |
 | `story/storyteller/` | M2：会话级编导，会话边界播种 `ConversationIntent`；`StubStoryteller`（零模型骨架）/ `ModelStoryteller`（重模型） |
 | `story/memory/` | `compaction.py`：历史压缩（sim 待建） |
-| `io/gateway/` | Model Gateway：`base.py`、`anthropic_gateway.py`、`openai_gateway.py`（含兼容端点）、`gemini_gateway.py`、`router.py`（按 model_id 分发）、`factory.py`（按 key 装配）、`mock.py` |
-| `io/transport/` | 收发边界：`base.py`（`Transport` 协议）、`memory.py`（测试）、`telegram.py`（M1 落地，懒加载 ptb） |
-| `io/persistence/` | `store.py`：SQLite 会话状态（历史去重 / 记忆快照 / 摘要） |
-| `runtime/` | 编排层：`orchestrator.py`（异步 tick 主循环）、`switch.py`（开关键）、`telegram_app.py`（装配） |
-| `presets.py` | 房间预设加载（手写世界书 + 角色卡，见 `examples/room.example.json`） |
+| `io/gateway/` | Model Gateway：`base.py`、`anthropic_gateway.py`、`openai_gateway.py`（含兼容端点）、`gemini_gateway.py`、`router.py`（按 model_id 分发）、`factory.py`（按 key 装配）、`ask.py`（conductor/usher/storyteller/compaction 共用的"一问一答 + 记原文 + 保守回落"）、`mock.py` |
+| `io/transport/` | 收发边界：`base.py`（`Transport` 协议，含平台 reply 限制 `can_reply_natively`）、`memory.py`（测试，可注入 reply 策略）、`telegram.py`（M1 落地，懒加载 ptb；`TelegramConfig.from_preset` 自取预设里的 telegram 段） |
+| `io/persistence/` | `store.py`：SQLite 会话状态（历史去重 / 记忆快照 / 摘要，行以 dataclass 返回）；`room_repo.py`：`RoomRepository`——内存近窗 + 库的**唯一**写入口（离线/在线差别只在这一处） |
+| `runtime/` | 编排层：`orchestrator.py`（异步主循环，只接线）、`session.py`（`ConversationSession` 会话状态机：seed/end/user_forced/清洗队列）、`switch.py`（开关键）、`players.py`（玩家身份 + `/iam`）、`app.py`（transport 无关装配 `build_orchestrator`）、`telegram_app.py`（Telegram 入口 = `aichatgroup-serve`） |
+| `presets.py` | 房间预设加载（手写世界书 + 角色卡，见 `examples/room.example.json`）。**transport 无关**：平台段原样进 `transports[<name>]`、角色卡的平台键进 `agent_options[agent_id]`，`*_env` 键统一从环境解析，各 transport 自取 |
 | `observability.py` | 结构化事件流（loguru 之上）：`log_event(kind, **fields)` 按事件类型选级别（`usher_escalate`/`conversation_seed`/`schedule`=DEBUG、`usher_absorb`/`model_call`=TRACE、原始输出 `model_raw`=FIREHOSE），渲染成一行 `kind key=value`（英文键、内容原样、无符号）；字段 bind 进 `extra` 供将来观测面板 fold。`log_model_raw(source, raw)` 在**每个模型输出点**（generator/usher/storyteller/conductor/compaction）记原始输出，`FIREHOSE`（TRACE 之下一级）承载，使 TRACE 保持可读 |
-| `runtime/log_relay.py` | 开发期把事件流按级别转发到 Telegram 群（`observer` bot 代发）；sync loguru sink → asyncio 队列 → `transport.send_system`，只转带 `event` 的记录、按阈值过滤 |
+| `runtime/log_relay.py` | `EventLogRelay`：开发期把事件流按级别转发到 transport 的系统出口（Telegram 里是 observer bot 代发）；sync loguru sink → asyncio 队列 → `transport.send_system`，只转带 `event` 的记录、按阈值过滤 |
 | `config.py` / `logging_setup.py` | 跨层基础设施：配置与日志（loguru 骨架 + `InterceptHandler` 接管 stdlib logging，既有 `getLogger().info()` 照旧可用） |
 
-常用符号在顶层再导出：`from aichatgroup import Agent, Orchestrator, ModelConductor, Storyteller, Store, load_preset`。
+常用符号在顶层**惰性**再导出：`from aichatgroup import Agent, Orchestrator, ModelConductor, Storyteller, Store, load_preset`
+（`import aichatgroup.domain` 不会顺带拖起 sqlite / loguru / 各 provider 适配器）。
+分层依赖规则由 `uv run lint-imports` 强制（契约在 `pyproject.toml [tool.importlinter]`）。
 
-### M1 主循环（transport-agnostic）
+### 主循环（transport-agnostic）
 
-`Orchestrator` 用 asyncio 把两条协程跑在一起：`_ingest_loop`（摄入人类/外部消息，按
-`external_id` 去重入库）与 `_speak_loop`（Director 选下一个说话者 → 组装 prompt → 调模型 →
-按气泡节奏 typing+发送 → 记忆增量入库）。**只有网络调用 `gateway.complete` 下放线程池**，
-prompt 组装/解析/历史读写全在事件循环线程内完成，两条协程对 `RoomState` 无并发竞争。
-Telegram 只是实现了 `Transport` 协议的一层薄适配；Foundry（M5）复用同一接口。
+`Orchestrator` 用 asyncio 把两条协程跑在一起：`_ingest_loop`（摄入人类/外部消息 → 指令分派 |
+身份解析 → `RoomRepository` 入史 → usher 分流 → `ConversationSession`）与 `_speak_loop`
+（会话边界交接 → conductor 选人 → `generator.prepare_turn` → 调模型 → `finish_turn` →
+`delivery.perform_turn` 逐条投递并逐条入史 → 记忆增量 → 回应后清洗 → compaction）。
+**只有网络调用 `gateway.complete` 下放线程池**，prompt 组装/解析/历史读写全在事件循环线程内完成，
+两条协程对 `RoomState` 无并发竞争。Telegram 只是实现了 `Transport` 协议的一层薄适配
+（含平台 reply 限制）；Foundry（M5）复用同一接口。
 
 ## 多 provider（每个角色一套模型，可混用）
 
@@ -169,7 +175,7 @@ fuzz 测试守护。用 `{{…}}` 而非 `<<…>>`：尖括号诱发「XML 要�
 ## 路线图
 
 - ~~**M0** 引擎骨架~~ ✅
-- ~~**M1（MVP）** Telegram 多 bot 热闹群聊：Transport 抽象、异步 Orchestrator、Director 调度器、
+- ~~**M1（MVP）** Telegram 多 bot 热闹群聊：Transport 抽象、异步 Orchestrator、Conductor 调度器、
   手写世界书/角色卡、开关键、SQLite 持久化、基础 compaction~~ ✅（已实机验证）
 - ~~**消息抽象地基**（M1↔M2）：`Message` 域模型（稳定 id/parts/reply_to/meta）、动作/语言分离、
   回复寻址端到端、结构化事件日志~~ ✅
