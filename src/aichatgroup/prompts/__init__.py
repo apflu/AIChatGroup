@@ -1,6 +1,6 @@
 """集中管理「引擎元指令」的 prompt 文本（A 类）。
 
-把 usher / director / compaction 的 system 指令，以及角色面「输出契约」的**纯文本**从代码里
+把 usher / conductor / compaction 的 system 指令，以及角色面「输出契约」的**纯文本**从代码里
 搬到这里，每个一份 `.md`——便于手动修改、且彻底免去 f-string 里的转义（`{{{{…}}}}`、`\"`）。
 
 **区分**（易混）：本包 `prompts/`（复数）= 原始 prompt **文本资产**；`message/prompt/`（单数）=
@@ -11,7 +11,7 @@
 `{}`：这样 prompt 里字面的 `{{SEPARATOR}}`（marker）、`{"notes": …}`（JSON 示例）**无需任何转义**。
 （若真需要字面 `$`，写 `$$`。）
 
-**契约边界**：marker 词表、usher 的 `DIRECTIONS`、director 的 `none`、MockGateway 认角色用的
+**契约边界**：marker 词表、usher 的 `DIRECTIONS`、conductor 的 `none`、MockGateway 认角色用的
 「扮演的角色是「…」」这类**机器要读的契约**仍是代码常量/正则、留在原处；这里只放给模型看的散文。
 `tests/test_prompts.py` 断言契约词确实出现在对应 prompt 里，防散文与代码漂移。
 

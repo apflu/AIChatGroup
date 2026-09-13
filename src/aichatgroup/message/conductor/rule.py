@@ -27,6 +27,3 @@ class RoundRobinConductor:
         # 理论不可达（n>=1 时必有返回）；兜底
         return agents[self._cursor % n].id
 
-
-# 迁移期别名：保住旧公共导出与外部引用，一个周期后可移除。
-RoundRobinDirector = RoundRobinConductor

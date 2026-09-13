@@ -36,7 +36,7 @@ def test_history_and_tail_layout():
     assert "cache_control" not in messages[2]["content"]
 
 
-def test_tail_contains_persona_memory_director():
+def test_tail_contains_persona_memory_conductor():
     world, room, agent = _fixture()
     room.memory["a1"] = '{"notes": "上一轮很热闹"}'
     _, messages = build_prompt(world, room, agent, conductor_instruction="制造一点张力")

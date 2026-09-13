@@ -1,7 +1,7 @@
-"""Director：RoundRobin 公平轮流 + ModelDirector 选择/兜底/留白。"""
+"""Conductor：RoundRobin 公平轮流 + ModelConductor 选择/兜底/留白。"""
 from aichatgroup.domain import Agent, RoomState
 from aichatgroup.domain.types import GatewayResponse, Usage
-from aichatgroup.message.conductor import ModelDirector, RoundRobinDirector, consecutive_count
+from aichatgroup.message.conductor import ModelConductor, RoundRobinConductor, consecutive_count
 
 
 def _agents():
@@ -26,7 +26,7 @@ class FakeGateway:
 
 def test_round_robin_is_fair_and_skips_last_speaker():
     agents = _agents()
-    d = RoundRobinDirector()
+    d = RoundRobinConductor()
     room = RoomState()
     picked = []
     for _ in range(4):
@@ -49,42 +49,42 @@ def test_consecutive_count_helper():
     assert consecutive_count(room, "阿福") == 2
 
 
-def test_model_director_picks_returned_id():
+def test_model_conductor_picks_returned_id():
     agents = _agents()
-    d = ModelDirector(FakeGateway("a2"), model_id="haiku")
+    d = ModelConductor(FakeGateway("a2"), model_id="haiku")
     assert d.next_speaker(RoomState(), agents) == "a2"
 
 
-def test_model_director_none_means_silence():
+def test_model_conductor_none_means_silence():
     agents = _agents()
-    d = ModelDirector(FakeGateway("none"), model_id="haiku", allow_silence=True)
+    d = ModelConductor(FakeGateway("none"), model_id="haiku", allow_silence=True)
     assert d.next_speaker(RoomState(), agents) is None
 
 
-def test_model_director_excludes_over_talker_and_falls_back():
+def test_model_conductor_excludes_over_talker_and_falls_back():
     agents = _agents()
     # 小丸子已连说 2 次，达到 max_consecutive → 本拍被排除
     room = RoomState()
     room.append("小丸子", "1")
     room.append("小丸子", "2")
     # 模型偏要选被排除的 a1（非法）→ 兜底到首个合法候选（a2）
-    d = ModelDirector(FakeGateway("a1"), model_id="haiku", max_consecutive=2)
+    d = ModelConductor(FakeGateway("a1"), model_id="haiku", max_consecutive=2)
     sid = d.next_speaker(room, agents)
     assert sid != "a1"
     assert sid in ("a2", "a3")
 
 
-def test_model_director_tolerates_noisy_output():
+def test_model_conductor_tolerates_noisy_output():
     agents = _agents()
-    d = ModelDirector(FakeGateway("我觉得应该让 a3 来说"), model_id="haiku")
+    d = ModelConductor(FakeGateway("我觉得应该让 a3 来说"), model_id="haiku")
     assert d.next_speaker(RoomState(), agents) == "a3"
 
 
-def test_model_director_falls_back_on_gateway_error():
+def test_model_conductor_falls_back_on_gateway_error():
     class BoomGateway:
         def complete(self, *a, **k):
             raise RuntimeError("network down")
 
-    d = ModelDirector(BoomGateway(), model_id="haiku")
+    d = ModelConductor(BoomGateway(), model_id="haiku")
     sid = d.next_speaker(RoomState(), _agents())
     assert sid == "a1"  # 异常 → 规则兜底首个候选

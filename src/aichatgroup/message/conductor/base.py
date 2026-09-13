@@ -8,7 +8,6 @@ M2 起它升级为 beat 级时钟的 owner——在一段 conversation 内排 be
 同步接口：真实实现（ModelConductor）内部可能调便宜模型，由 Orchestrator 用
 to_thread 包起来，不阻塞事件循环。
 
-命名：M2 起统一为 **Conductor**；`Director` 是保留一个迁移周期的别名（见 docs/milestone/M2.md）。
 """
 from __future__ import annotations
 
@@ -22,9 +21,6 @@ class Conductor(Protocol):
         """返回下一个应说话的 agent.id；None 表示这一拍没人说。"""
         ...
 
-
-# 迁移期别名：保住旧公共导出与外部引用，一个周期后可移除。
-Director = Conductor
 
 
 def last_speaker_name(room: RoomState) -> str | None:
