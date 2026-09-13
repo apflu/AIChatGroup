@@ -1,4 +1,4 @@
-"""领域层：数据结构与控制标记词表（无外部/内部依赖，可被各层复用）。"""
+"""领域层：数据结构与控制标记词表（不依赖任何兄弟包，可被各层复用）。"""
 from .conversation import (
     CHITCHAT,
     DEADLOCK,
@@ -17,7 +17,6 @@ from .markers import BUBBLE_SEPARATOR, MEMORY_MARKER, USER_TAG
 from .player import STRANGER_NAME, Player, sanitize_player_name
 from .types import (
     Agent,
-    ChatMessage,
     ContentPart,
     GatewayResponse,
     Message,
@@ -52,7 +51,6 @@ __all__ = [
     "Agent",
     "Message",
     "ContentPart",
-    "ChatMessage",
     "GatewayResponse",
     "PacingConfig",
     "RoomState",

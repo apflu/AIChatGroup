@@ -22,8 +22,11 @@ ROADMAP —— 向 SillyTavern 预设结构靠拢：
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from ...domain.types import Agent, RoomState, WorldBook, render_parts
-from ...prompts import load as load_prompt, render as render_prompt
+from ...prompts import load as load_prompt
+from ...prompts import render as render_prompt
 
 # 返回给 Gateway 的结构：system 为 block 列表，messages 为 {role, content} 列表。
 SystemBlock = dict
@@ -39,6 +42,35 @@ def _cache(text: str) -> SystemBlock:
     return {"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}
 
 
+# ---- 各层散文渲染（domain 只存数据；"数据 → 给模型看的文本"在这里）--------------------
+
+def render_world(world: WorldBook) -> str:
+    """第 0 层：世界观圣经 + 群聊规则。"""
+    return render_prompt("world", bible=world.bible.strip(), rules=world.rules.strip())
+
+
+def render_layer1(room: RoomState) -> str:
+    """第 1 层：长期摘要 + 客观关系图谱；两者皆空时给占位（保证块非空、断点稳定）。"""
+    parts = []
+    if room.long_term_summary.strip():
+        parts.append(render_prompt("layer1_summary", summary=room.long_term_summary.strip()))
+    if room.objective_relations.strip():
+        parts.append(render_prompt("layer1_relations", relations=room.objective_relations.strip()))
+    return "\n\n".join(parts) if parts else "(暂无长期摘要)"
+
+
+def render_persona(agent: Agent) -> str:
+    """RisuAI 式层级：全局 base_prompt → 「扮演的角色是「X」」 → 角色卡。
+    MockGateway 靠 persona.md 里的措辞从尾部认出当前角色（见 io/gateway/mock.py）。"""
+    parts = []
+    if agent.base_prompt.strip():
+        parts.append(agent.base_prompt.strip())
+    parts.append(render_prompt("persona", name=agent.name))
+    if agent.character_card.strip():
+        parts.append(agent.character_card.strip())
+    return "\n\n".join(parts)
+
+
 def build_tail(
     agent: Agent,
     memory_text: str,
@@ -50,7 +82,7 @@ def build_tail(
     per-agent 的知识隔离落在这——尾部本就每 agent 不同且不缓存，注入零缓存回归。独知内情两来源：
     `agent.secret_knowledge`（预设静态）+ `granted_knowledge`（storyteller 边界私授、累积），合并渲染。
     """
-    parts = [load_prompt("tail_header"), agent.render_persona()]
+    parts = [load_prompt("tail_header"), render_persona(agent)]
     knowledge = "\n".join(
         k for k in (agent.secret_knowledge.strip(), granted_knowledge.strip()) if k
     )
@@ -92,7 +124,7 @@ def build_prompt(
     room: RoomState,
     agent: Agent,
     conductor_instruction: str = "",
-    resolve: "Callable[[int], object] | None" = None,
+    resolve: Callable[[int], object] | None = None,
 ) -> tuple[list[SystemBlock], list[Message]]:
     """组装一次调用的 (system_blocks, messages)。
 
@@ -100,8 +132,8 @@ def build_prompt(
     resolve(id)->Message|None 用于把「超出近窗的被回复消息」取回内联引用（通常由 store 提供）。
     """
     system: list[SystemBlock] = [
-        _cache(world.render()),          # breakpoint 1
-        _cache(room.render_layer1()),    # breakpoint 2
+        _cache(render_world(world)),     # breakpoint 1
+        _cache(render_layer1(room)),     # breakpoint 2
     ]
 
     # 可见性过滤（清洗 + M3 知识隔离的唯一接缝）：只组装对本 agent 可见的历史。

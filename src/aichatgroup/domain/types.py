@@ -1,4 +1,4 @@
-"""领域数据结构。
+"""领域数据结构（纯数据：不 import 任何兄弟包；渲成 prompt 文本是 message/prompt 的事）。
 
 M0 共享全知设计：所有 Agent 共用同一份 append-only 历史（RoomState.history），
 每个 Agent 只有私有记忆快照（RoomState.memory[agent_id]）沉在尾部、每轮可变。
@@ -8,7 +8,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .markers import USER_TAG
-from ..prompts import render as render_prompt
 
 
 @dataclass
@@ -17,9 +16,6 @@ class WorldBook:
 
     bible: str
     rules: str
-
-    def render(self) -> str:
-        return render_prompt("world", bible=self.bible.strip(), rules=self.rules.strip())
 
 
 @dataclass
@@ -56,16 +52,7 @@ class Agent:
     # 是"不同角色知道不同的事"最省事的落点——不劈开第 0 层共享世界书缓存。
     secret_knowledge: str = ""
     # 与性格接驳的推断配置（目前只有停顿；后续可扩展更多可调 factor）
-    pacing: "PacingConfig" = field(default_factory=lambda: PacingConfig())
-
-    def render_persona(self) -> str:
-        parts = []
-        if self.base_prompt.strip():
-            parts.append(self.base_prompt.strip())
-        parts.append(render_prompt("persona", name=self.name))
-        if self.character_card.strip():
-            parts.append(self.character_card.strip())
-        return "\n\n".join(parts)
+    pacing: PacingConfig = field(default_factory=lambda: PacingConfig())
 
 
 @dataclass
@@ -81,7 +68,7 @@ class ContentPart:
 _ACTION_KINDS = ("gesture", "beat", "action")
 
 
-def render_parts(parts: "list[ContentPart]") -> str:
+def render_parts(parts: list[ContentPart]) -> str:
     """把 parts 渲染成给模型看/入历史的文本：动作用中文括号、贴纸标注、语言裸文本。
 
     纯 speech 时输出 == 语言原文 → 与旧 `text` 逐字节一致，保共享缓存前缀不变式。
@@ -120,7 +107,7 @@ class Message:
     reply_to: int | None = None
     meta: dict = field(default_factory=dict)
     redacted: bool = False              # 世界否决/清洗：对谁都不可见（软删除）
-    visible_to: "frozenset[str] | None" = None   # M3 预留：None=全体；否则仅这些 agent_id
+    visible_to: frozenset[str] | None = None   # M3 预留：None=全体；否则仅这些 agent_id
 
     @property
     def text(self) -> str:
@@ -152,9 +139,6 @@ class Message:
         return f"⟦{self.id}⟧ {tag}[{self.speaker}] {note}{render_parts(self.parts)}"
 
 
-# 迁移期别名：保住公共导出与旧引用，一个周期后可移除。
-ChatMessage = Message
-
 
 @dataclass
 class RoomState:
@@ -177,14 +161,6 @@ class RoomState:
         # 从已有历史（如 store 载入）同步计数器，避免 id 冲突。
         if self.history:
             self._next_id = max(m.id for m in self.history) + 1
-
-    def render_layer1(self) -> str:
-        parts = []
-        if self.long_term_summary.strip():
-            parts.append(render_prompt("layer1_summary", summary=self.long_term_summary.strip()))
-        if self.objective_relations.strip():
-            parts.append(render_prompt("layer1_relations", relations=self.objective_relations.strip()))
-        return "\n\n".join(parts) if parts else "(暂无长期摘要)"
 
     def append(
         self,

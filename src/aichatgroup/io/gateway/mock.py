@@ -13,7 +13,7 @@ import re
 from ...domain.types import GatewayResponse, Usage
 from .base import block_text, est_tokens
 
-# 与 Agent.render_persona() 的措辞对应，供 MockGateway 从 tail 里认出当前角色。
+# 与 prompts/persona.md（message/prompt/builder.render_persona）的措辞对应，供 MockGateway 从 tail 里认出当前角色。
 _PERSONA_NAME_RE = re.compile(r"扮演的角色是「(.+?)」")
 
 
