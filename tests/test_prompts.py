@@ -32,8 +32,8 @@ def test_usher_prompt_lists_every_direction_and_absorb():
 
 def test_usher_prompt_carries_violate_marker():
     # violate 是 canon 违规的机器契约（parser 据此置 violation）；散文必须描述它
-    from aichatgroup.message.usher import _VIOLATE
-    assert _VIOLATE in load("usher.system"), "usher.system.md 缺 violate 标记（与解析器漂移）"
+    from aichatgroup.message.usher import VIOLATE_MARKER
+    assert VIOLATE_MARKER in load("usher.system"), "usher.system.md 缺 violate 标记（与解析器漂移）"
 
 
 def test_storyteller_prompt_carries_know_contract():

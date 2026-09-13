@@ -6,6 +6,9 @@ M1 极简策略：当历史条数超过 max_history，取最老的一段（除�
 
 只在**边界**触发（超阈值才压），保证第 0/1 层的缓存前缀不会每拍都变。
 函数就地改 room；持久化（写摘要 + 裁剪历史）由调用方负责，以保持存储无关。
+
+模型/网络异常 → 本次不压、原样返回 `compacted=False`（历史照旧、下一拍再试），
+绝不让一次 provider 抽风把主循环拖死。
 """
 from __future__ import annotations
 
@@ -13,9 +16,9 @@ import logging
 from dataclasses import dataclass
 
 from ...domain.types import RoomState, WorldBook
-from ...io.gateway import ModelGateway
-from ...observability import log_model_raw
-from ...prompts import load as load_prompt, render as render_prompt
+from ...io.gateway import ModelGateway, ask_or_none
+from ...prompts import load as load_prompt
+from ...prompts import render as render_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -51,13 +54,12 @@ def maybe_compact(
     user = render_prompt(
         "compaction.user", bible=world.bible.strip(), prior=prior, transcript=transcript
     )
-    resp = gateway.complete(
-        system=[{"type": "text", "text": _COMPACT_SYSTEM}],
-        messages=[{"role": "user", "content": user}],
-        model_id=model_id,
-        max_tokens=max_tokens,
+    resp = ask_or_none(
+        gateway, model_id, _COMPACT_SYSTEM, user, max_tokens=max_tokens, source="compaction"
     )
-    log_model_raw("compaction", resp.text)
+    if resp is None or not resp.text.strip():
+        # 失败/空摘要：不动历史（宁可多留几条，也别把旧段扔了却没摘要接住）
+        return CompactionResult(compacted=False)
     new_summary = resp.text.strip()
 
     dropped = len(old)

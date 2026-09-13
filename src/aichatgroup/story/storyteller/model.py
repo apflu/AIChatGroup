@@ -20,9 +20,9 @@ from ...domain.conversation import (
     ConversationIntent,
 )
 from ...domain.types import Agent, RoomState
-from ...io.gateway import ModelGateway
-from ...observability import log_model_raw
-from ...prompts import load as load_prompt, render as render_prompt
+from ...io.gateway import ModelGateway, ask_or_none
+from ...prompts import load as load_prompt
+from ...prompts import render as render_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -73,18 +73,14 @@ class ModelStoryteller:
             last_summary=last_summary,
             direction=direction,
         )
-        try:
-            resp = self.gateway.complete(
-                system=[{"type": "text", "text": _STORYTELLER_SYSTEM}],
-                messages=[{"role": "user", "content": user}],
-                model_id=self.model_id,
-                max_tokens=256,
-            )
-            log_model_raw("storyteller", resp.text)
-            return self._parse(resp.text)
-        except Exception as exc:  # 网络/模型异常 → 保守回落闲聊
-            logger.warning("storyteller 模型调用失败，回落闲聊：%s", exc)
+        # 网络/模型异常 → 保守回落闲聊（误判只赔平淡）
+        resp = ask_or_none(
+            self.gateway, self.model_id, _STORYTELLER_SYSTEM, user,
+            max_tokens=256, source="storyteller",
+        )
+        if resp is None:
             return ConversationIntent(kind=CHITCHAT)
+        return self._parse(resp.text)
 
     def _parse(self, text: str) -> ConversationIntent:
         kind = CHITCHAT

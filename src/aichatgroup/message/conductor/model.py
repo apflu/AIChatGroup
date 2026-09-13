@@ -11,9 +11,9 @@ from __future__ import annotations
 import logging
 
 from ...domain.types import Agent, RoomState
-from ...io.gateway import ModelGateway
-from ...observability import log_model_raw
-from ...prompts import load as load_prompt, render as render_prompt
+from ...io.gateway import ModelGateway, ask_or_none
+from ...prompts import load as load_prompt
+from ...prompts import render as render_prompt
 from .base import consecutive_count, last_speaker_name
 
 logger = logging.getLogger(__name__)
@@ -58,18 +58,12 @@ class ModelConductor:
         user = render_prompt(
             "conductor.user", roster=roster, recent=recent, options=options, hint=hint
         )
-        try:
-            resp = self.gateway.complete(
-                system=[{"type": "text", "text": _CONDUCTOR_SYSTEM}],
-                messages=[{"role": "user", "content": user}],
-                model_id=self.model_id,
-                max_tokens=16,
-            )
-            log_model_raw("conductor", resp.text)
-            choice = resp.text.strip().lower()
-        except Exception as exc:  # 模型/网络异常 → 规则兜底
-            logger.warning("conductor 模型调用失败，回退规则：%s", exc)
-            choice = ""
+        # 模型/网络异常 → 规则兜底（choice 为空 → 走"非法输出"分支选首个候选）
+        resp = ask_or_none(
+            self.gateway, self.model_id, _CONDUCTOR_SYSTEM, user,
+            max_tokens=16, source="conductor",
+        )
+        choice = resp.text.strip().lower() if resp is not None else ""
 
         by_id = {a.id.lower(): a.id for a in eligible}
         if choice in ("none", "无", "留白") and self.allow_silence:
@@ -83,7 +77,3 @@ class ModelConductor:
         # 非法输出 → 兜底选第一个合法候选
         logger.debug("conductor 输出无法解析(%r)，回退首个候选", choice)
         return eligible[0].id if eligible else None
-
-
-# 迁移期别名：保住旧公共导出与外部引用，一个周期后可移除。
-ModelDirector = ModelConductor

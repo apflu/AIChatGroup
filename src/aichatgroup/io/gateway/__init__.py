@@ -4,6 +4,7 @@ RouterGateway 按 model_id 前缀把调用分发给对应 provider；build_gatew
 上层（engine / Orchestrator）只依赖 ModelGateway 协议，混用多家模型对它透明。
 """
 from .anthropic_gateway import AnthropicGateway
+from .ask import ask, ask_or_none
 from .base import ModelGateway, block_text, est_tokens
 from .factory import build_gateway
 from .gemini_gateway import GeminiGateway
@@ -26,6 +27,8 @@ __all__ = [
     "RouterGateway",
     "parse_model_spec",
     "build_gateway",
+    "ask",
+    "ask_or_none",
     "block_text",
     "est_tokens",
     "ANTHROPIC_PREFIXES",

@@ -43,3 +43,18 @@ def test_compaction_summarizes_and_trims():
     assert [m.text for m in room.history] == ["第4句", "第5句"]
     # 旧摘要被作为上下文喂给了模型
     assert "旧摘要" in gw.calls[0][1][0]["content"]
+
+
+def test_compaction_gateway_failure_leaves_history_intact():
+    # provider 抽风时不压、不炸：历史/摘要原样，主循环下一拍再试
+    class BoomGateway:
+        def complete(self, *a, **k):
+            raise RuntimeError("network down")
+
+    room = RoomState(long_term_summary="旧摘要")
+    for i in range(6):
+        room.append("小丸子", f"第{i}句")
+    result = maybe_compact(BoomGateway(), _world(), room, "haiku", max_history=4, keep_last=2)
+    assert result.compacted is False
+    assert len(room.history) == 6
+    assert room.long_term_summary == "旧摘要"

@@ -18,10 +18,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from ..domain.types import RoomState
-from ..io.gateway import ModelGateway
-from ..observability import log_model_raw
-from ..prompts import load as load_prompt, render as render_prompt
+from ...domain.types import RoomState
+from ...io.gateway import ModelGateway, ask_or_none
+from ...prompts import load as load_prompt
+from ...prompts import render as render_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ DIRECTIONS = ("advance", "disrupt", "probe", "swerve")
 _ABSORB = "absorb"
 # canon 违规标记：与方向**正交**——模型在方向词后追加它，表示输入抵触已确立的世界设定。
 # 只有它触发"世界回应后清洗"（M3 桥接）；合法强推（有方向、无 violate）照常 canon 化，不清洗。
-_VIOLATE = "violate"
+VIOLATE_MARKER = "violate"
 
 _USHER_SYSTEM = load_prompt("usher.system")
 
@@ -61,22 +61,19 @@ class Usher:
             m.render() for m in room.history[-self.recent_window :]
         ) or "（还没有人说话）"
         user = render_prompt("usher.user", recent=recent, speaker=speaker, text=text)
-        try:
-            resp = self.gateway.complete(
-                system=[{"type": "text", "text": _USHER_SYSTEM}],
-                messages=[{"role": "user", "content": user}],
-                model_id=self.model_id,
-                max_tokens=12,          # 容两词：方向 + 可选的 violate 标记
-            )
-            log_model_raw("usher", resp.text, speaker=speaker)
-            choice = resp.text.strip().lower()
-        except Exception as exc:  # 网络/模型异常 → 保守 absorb（误判只赔延迟）
-            logger.warning("usher 模型调用失败，保守 absorb：%s", exc)
+        # 网络/模型异常 → 保守 absorb（误判只赔延迟）
+        resp = ask_or_none(
+            self.gateway, self.model_id, _USHER_SYSTEM, user,
+            max_tokens=12,          # 容两词：方向 + 可选的 violate 标记
+            source="usher", speaker=speaker,
+        )
+        if resp is None:
             return UsherDecision(escalate=False, raw="")
+        choice = resp.text.strip().lower()
 
         # violate 与方向正交，先整体扫一遍（否则方向词命中即返回会漏掉其后的 violate）
         tokens = choice.replace("，", " ").replace(",", " ").split()
-        violation = _VIOLATE in tokens
+        violation = VIOLATE_MARKER in tokens
         # 容忍噪声：取第一个命中的方向词或 absorb
         for token in tokens:
             if token in DIRECTIONS:
