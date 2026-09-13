@@ -52,7 +52,7 @@ class ModelConductor:
     def next_speaker(self, room: RoomState, agents: list[Agent]) -> str | None:
         eligible = self._eligible(room, agents)
         roster = "\n".join(f"- {a.id}：{a.name}" for a in eligible)
-        recent = "\n".join(m.render() for m in room.history[-self.recent_window :]) or "(还没有人说话)"
+        recent = "\n".join(m.render() for m in room.visible_history(last=self.recent_window)) or "(还没有人说话)"
         options = "、".join(a.id for a in eligible)
         hint = "，或 none" if self.allow_silence else ""
         user = render_prompt(

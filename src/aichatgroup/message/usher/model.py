@@ -58,7 +58,7 @@ class Usher:
 
     def classify(self, room: RoomState, text: str, speaker: str = "用户") -> UsherDecision:
         recent = "\n".join(
-            m.render() for m in room.history[-self.recent_window :]
+            m.render() for m in room.visible_history(last=self.recent_window)
         ) or "（还没有人说话）"
         user = render_prompt("usher.user", recent=recent, speaker=speaker, text=text)
         # 网络/模型异常 → 保守 absorb（误判只赔延迟）

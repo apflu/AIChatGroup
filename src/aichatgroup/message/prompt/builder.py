@@ -140,7 +140,7 @@ def build_prompt(
     # redacted 对谁都不可见 → 各 agent 的可见历史仍逐字节一致（只是变短），共享同一缓存车道；
     # visible_to（M3 一般情形）才会 per-agent 分叉车道，默认 None 时此行为完全惰性。
     window_map = {m.id: m for m in room.history}
-    visible = [m for m in room.history if m.is_visible_to(agent.id)]
+    visible = room.visible_history(agent.id)
     messages: list[Message] = []
     last = len(visible) - 1
     for i, msg in enumerate(visible):

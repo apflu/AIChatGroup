@@ -49,7 +49,7 @@ class ModelStoryteller:
         agents: list[Agent] | None = None,
     ) -> ConversationIntent:
         recent = "\n".join(
-            m.render() for m in room.history[-self.recent_window :]
+            m.render() for m in room.visible_history(last=self.recent_window)
         ) or "（还没有人说话）"
         # 在场角色名册（name+id）：storyteller 据此按 agent_id 私授知识；不给则无法定向授知。
         cast = "、".join(f"{a.name}({a.id})" for a in agents) if agents else "（未提供在场角色）"

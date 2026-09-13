@@ -162,6 +162,19 @@ class RoomState:
         if self.history:
             self._next_id = max(m.id for m in self.history) + 1
 
+    def visible_history(self, agent_id: str | None = None, *, last: int | None = None) -> list[Message]:
+        """世界可见的历史：剔除 redacted（清洗 = 对谁都不可见）。给 agent_id 时再套 visible_to 子集。
+
+        **所有**喂给模型的历史都该从这里取（角色面 builder、usher / conductor / storyteller 的近窗、
+        compaction 的转录）——否则被清洗的输入会从便宜模型的上下文或长期摘要里回流（M3 §3）。
+        last 只取末尾 n 条（在过滤**之后**截，保证近窗条数不因清洗而变少）。
+        """
+        if agent_id is None:
+            msgs = [m for m in self.history if not m.redacted]
+        else:
+            msgs = [m for m in self.history if m.is_visible_to(agent_id)]
+        return msgs[-last:] if last else msgs
+
     def append(
         self,
         speaker: str,
